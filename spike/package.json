@@ -1,0 +1,31 @@
+{
+  "name": "agent-monitor-spike",
+  "displayName": "Agent Monitor — Feasibility Spike",
+  "description": "Proves we can detect Claude Code / OpenCode invocations and capture prompt/command text from the VS Code integrated terminal. Spike only — no backend, no storage.",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "internal",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentMonitorSpike.showLog",
+        "title": "Agent Monitor Spike: Show Capture Log"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.93.0",
+    "typescript": "^5.4.0"
+  }
+}
