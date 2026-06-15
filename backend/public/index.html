@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Monitor — usage dashboard</title>
+  <style>
+    :root { --bg:#0f1115; --card:#181b22; --line:#262a33; --fg:#e6e9ef; --muted:#9aa3b2; --accent:#6ea8fe; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+    header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+    header h1 { font-size:16px; margin:0; font-weight:600; }
+    .banner { background:#3a2b12; color:#f0d9a8; padding:8px 24px; font-size:12px; border-bottom:1px solid var(--line); }
+    main { padding:24px; max-width:1100px; margin:0 auto; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 20px; margin-bottom:20px; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+    th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    tr.clickable:hover { background:#1f2430; cursor:pointer; }
+    .pill { background:#222838; color:var(--accent); padding:1px 8px; border-radius:999px; font-size:12px; }
+    .muted { color:var(--muted); }
+    .warn { color:#f0b86e; }
+    input,button { font:inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#11141a; color:var(--fg); }
+    button { background:var(--accent); color:#0b0d11; border:none; cursor:pointer; font-weight:600; }
+    #login { max-width:360px; margin:80px auto; }
+    pre { white-space:pre-wrap; word-break:break-word; background:#0c0e13; padding:10px; border-radius:8px; border:1px solid var(--line); }
+    .hidden { display:none; }
+    .right { text-align:right; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🔭 Agent Monitor</h1>
+    <span class="muted">usage dashboard — monitoring only, no flags or scores</span>
+    <span style="margin-left:auto"><button id="logout" class="hidden">Log out</button></span>
+  </header>
+  <div class="banner">Monitoring is active. Captured agent prompts are redacted and access is logged. For aggregate usage/cost review only — never used to flag or penalize.</div>
+
+  <main>
+    <div id="login" class="card">
+      <h2 style="margin-top:0;font-size:15px">Sign in</h2>
+      <p class="muted">Admin token (production: replace with company SSO).</p>
+      <div style="display:flex;gap:8px">
+        <input id="token" type="password" placeholder="admin token" style="flex:1" />
+        <button id="loginBtn">Sign in</button>
+      </div>
+      <p id="loginErr" class="warn"></p>
+    </div>
+
+    <div id="app" class="hidden">
+      <div class="card">
+        <h2 style="margin-top:0;font-size:15px">Usage by coder</h2>
+        <table id="coders">
+          <thead><tr>
+            <th>Coder</th><th class="right">Sessions</th><th class="right">Claude</th>
+            <th class="right">OpenCode</th><th class="right">Tokens (in/out)</th>
+            <th class="right">Est. cost</th><th class="right">Simple→Opus</th><th>IPs</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="muted" style="font-size:12px">“Simple→Opus” = simple-class tasks that ran on the expensive Claude model (cost signal, descriptive). Click a row for the role-gated prompt drill-down (access is logged).</p>
+      </div>
+
+      <div id="drill" class="card hidden">
+        <h2 style="margin-top:0;font-size:15px">Prompts — <span id="drillCoder"></span> <span class="pill">role-gated · access logged</span></h2>
+        <div id="drillBody"></div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // Rates mirror backend cost.ts (placeholders). Cost is shown for context only.
+    const RATES = { 'claude-opus-4-8':[15,75], 'claude-sonnet-4-6':[3,15], 'claude-haiku-4-5-20251001':[1,5], 'opencode':[0.3,0.9], 'default':[3,15] };
+    const $ = (s) => document.querySelector(s);
+
+    async function api(path) {
+      const r = await fetch(path, { credentials: 'same-origin' });
+      if (r.status === 401) { showLogin(); throw new Error('unauthorized'); }
+      return r.json();
+    }
+    function showLogin(){ $('#login').classList.remove('hidden'); $('#app').classList.add('hidden'); $('#logout').classList.add('hidden'); }
+    function showApp(){ $('#login').classList.add('hidden'); $('#app').classList.remove('hidden'); $('#logout').classList.remove('hidden'); }
+
+    $('#loginBtn').onclick = async () => {
+      const r = await fetch('/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ token: $('#token').value }), credentials:'same-origin' });
+      if (!r.ok) { $('#loginErr').textContent = 'Invalid token.'; return; }
+      $('#loginErr').textContent = ''; $('#token').value=''; showApp(); loadReport();
+    };
+    $('#logout').onclick = async () => { await fetch('/logout', { method:'POST', credentials:'same-origin' }); showLogin(); };
+
+    async function loadReport() {
+      const data = await api('/api/report');
+      const tb = $('#coders tbody'); tb.innerHTML = '';
+      for (const c of data.coders) {
+        const cost = (c.tokens_in/1e6)*((RATES['default'])[0]) + (c.tokens_out/1e6)*((RATES['default'])[1]);
+        const tr = document.createElement('tr');
+        tr.className = 'clickable';
+        tr.innerHTML = `<td>${c.coder}</td><td class="right">${c.sessions}</td>
+          <td class="right">${c.claude}</td><td class="right">${c.opencode}</td>
+          <td class="right">${c.tokens_in.toLocaleString()} / ${c.tokens_out.toLocaleString()}</td>
+          <td class="right">~$${cost.toFixed(2)}</td>
+          <td class="right ${c.simple_on_opus>0?'warn':''}">${c.simple_on_opus}</td>
+          <td class="muted">${(c.ips||[]).join(', ')||'—'}</td>`;
+        tr.onclick = () => drill(c.coder);
+        tb.appendChild(tr);
+      }
+    }
+
+    async function drill(coder) {
+      const data = await api('/api/coder/' + encodeURIComponent(coder));
+      $('#drill').classList.remove('hidden');
+      $('#drillCoder').textContent = coder;
+      const rows = data.interactions.map(i =>
+        `<div style="margin-bottom:10px"><div class="muted" style="font-size:12px">${i.ts||''} · ${i.model||'?'} · ${i.task_class} · ${i.git_branch||'-'}</div><pre>${(i.prompt||'(no prompt)').replace(/</g,'&lt;')}</pre></div>`).join('');
+      $('#drillBody').innerHTML = rows || '<p class="muted">No prompts.</p>';
+      $('#drill').scrollIntoView({ behavior:'smooth' });
+    }
+
+    // Try existing session on load.
+    api('/api/report').then(() => { showApp(); loadReport(); }).catch(() => showLogin());
+  </script>
+</body>
+</html>

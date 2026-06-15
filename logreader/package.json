@@ -1,0 +1,32 @@
+{
+  "name": "agent-logreader-spike",
+  "displayName": "Agent Log Reader — spike",
+  "description": "Read-only spike: parse Claude Code and OpenCode session logs to recover prompt text, model id, and token usage. No backend, no storage, no network.",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "internal",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "logReaderSpike.scan",
+        "title": "Agent Log Reader Spike: Scan local logs"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "cli": "node out/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.93.0",
+    "typescript": "^5.4.0"
+  }
+}

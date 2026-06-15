@@ -1,0 +1,15 @@
+{
+  "name": "agent-monitor-local",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Local-only prototype of the central monitoring pipeline: capture agent logs per coder (+IP), redact, store, and report usage/cost. Monitoring-only; no flagging.",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "capture": "node out/capture.js",
+    "report": "node out/report.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}
