@@ -355,6 +355,13 @@ function parseSQLite(dbPath, wantTables) {
   return result;
 }
 
+function parseJSON(v) {
+  if (!v) return {};
+  try {
+    return JSON.parse(typeof v === 'string' ? v : v.toString('utf8'));
+  } catch { return {}; }
+}
+
 function readOpencodeDB(dbPath) {
   let data;
   try {
@@ -364,75 +371,79 @@ function readOpencodeDB(dbPath) {
     return [];
   }
 
+  // Index sessions by id
   const sessions = {};
   for (const s of (data.session || [])) {
-    const id = s.id || s.sessionId;
-    if (id) sessions[id] = s;
+    if (s.id) sessions[s.id] = s;
   }
 
-  // Index parts by message_id for token counts
+  // Index parts by message_id
   const partsByMsg = {};
   for (const p of (data.part || [])) {
-    const mid = p.message_id || p.messageId;
-    if (!mid) continue;
-    if (!partsByMsg[mid]) partsByMsg[mid] = [];
-    partsByMsg[mid].push(p);
+    if (!p.message_id) continue;
+    if (!partsByMsg[p.message_id]) partsByMsg[p.message_id] = [];
+    partsByMsg[p.message_id].push(p);
   }
 
-  const results = [];
+  // Track how many user messages per session (to avoid double-counting session tokens)
+  const sesMsgCount = {};
   for (const m of (data.message || [])) {
-    const role = m.role || m.type || m.speaker || '';
+    const d = parseJSON(m.data);
+    if (['user','human'].includes(d.role || '')) {
+      sesMsgCount[m.session_id] = (sesMsgCount[m.session_id] || 0) + 1;
+    }
+  }
+
+  const sesFirstSeen = new Set();
+  const results = [];
+
+  for (const m of (data.message || [])) {
+    // All content lives in the data JSON column
+    const mData = parseJSON(m.data);
+    const role = mData.role || mData.type || mData.speaker || '';
     if (!['user','human'].includes(role)) continue;
 
-    // Extract prompt text — may be JSON content blocks or plain string
-    let prompt = null;
-    const raw = m.content || m.text || m.body || '';
-    if (typeof raw === 'string' && raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) prompt = parsed.filter(b=>b&&b.type==='text').map(b=>String(b.text||'')).join('\n').trim()||null;
-        else if (parsed && parsed.text) prompt = String(parsed.text).trim()||null;
-        else prompt = raw.trim()||null;
-      } catch { prompt = raw.trim()||null; }
-    } else if (raw instanceof Buffer) {
-      prompt = raw.toString('utf8').trim() || null;
+    // Prompt text comes from associated part rows (data.type==='text')
+    let prompt = '';
+    for (const p of (partsByMsg[m.id] || [])) {
+      const pData = parseJSON(p.data);
+      if (pData.type === 'text' && pData.text) prompt += pData.text;
     }
-
-    // Fall back to text parts
-    if (!prompt) {
-      const parts = (partsByMsg[m.id] || []).filter(p => (p.type||'').includes('text') || !p.type);
-      for (const p of parts) {
-        const c = p.content || p.text || '';
-        const t = typeof c === 'string' ? c : (c instanceof Buffer ? c.toString('utf8') : '');
-        if (t) { try { const j=JSON.parse(t); prompt=(j&&j.text?j.text:t).trim()||null; } catch { prompt=t.trim()||null; } }
-        if (prompt) break;
-      }
-    }
+    // Fallback: text may be directly in message data
+    if (!prompt && mData.text) prompt = mData.text;
+    prompt = prompt.trim();
     if (!prompt) continue;
 
-    const sesId = m.session_id || m.sessionId || null;
-    const ses   = sesId ? (sessions[sesId] || {}) : {};
+    const sesId = m.session_id || null;
+    const ses   = sessions[sesId] || {};
 
-    // Token counts from assistant parts linked to same message or session
-    let tokIn = 0, tokOut = 0;
-    for (const p of (partsByMsg[m.id] || [])) {
-      tokIn  += Number(p.tokens_input  || p.input_tokens  || p.tokens_in  || 0) || 0;
-      tokOut += Number(p.tokens_output || p.output_tokens || p.tokens_out || 0) || 0;
+    // Model: session.model is JSON like {"id":"claude-haiku-...","providerID":"anthropic"}
+    const sesModel = parseJSON(ses.model);
+    const model = sesModel.id || sesModel.modelID || ses.model_id || null;
+
+    // Token counts are stored at session level — assign to first message of each session
+    let tokIn = 0, tokOut = 0, tokCR = 0, tokCW = 0;
+    if (sesId && !sesFirstSeen.has(sesId)) {
+      sesFirstSeen.add(sesId);
+      tokIn  = Number(ses.tokens_input        || 0);
+      tokOut = Number(ses.tokens_output       || 0);
+      tokCR  = Number(ses.tokens_cache_read   || 0);
+      tokCW  = Number(ses.tokens_cache_write  || 0);
     }
 
-    let ts = m.time || m.created_at || m.timestamp || null;
+    let ts = m.time_created || mData.time?.created || null;
     if (typeof ts === 'number') ts = new Date(ts).toISOString();
 
     results.push({
       agent: 'opencode',
-      model: ses.model || m.model || null,
+      model,
       prompt,
-      workspace: ses.cwd || ses.path || ses.directory || m.cwd || null,
+      workspace: ses.directory || ses.path || ses.cwd || null,
       gitBranch: null,
       sessionId: sesId || sha1(m.id || prompt).slice(0, 16),
       timestamp: ts,
-      tokens: { input: tokIn, output: tokOut, cacheRead: 0, cacheCreate: 0 },
-      modelConfidence: 'inferred',
+      tokens: { input: tokIn, output: tokOut, cacheRead: tokCR, cacheCreate: tokCW },
+      modelConfidence: 'authoritative',
     });
   }
 
@@ -440,11 +451,37 @@ function readOpencodeDB(dbPath) {
   return results;
 }
 
+function debugOpencodeDB(dbPath) {
+  console.log('\n=== OpenCode DB debug ===');
+  console.log('File:', dbPath);
+  let data;
+  try { data = parseSQLite(dbPath, ['session', 'message', 'part']); }
+  catch(e) { console.log('PARSE ERROR:', e.message, e.stack); return; }
+
+  for (const [tbl, rows] of Object.entries(data)) {
+    console.log(`\n-- table: ${tbl} (${rows.length} rows) --`);
+    if (!rows.length) { console.log('  (empty)'); continue; }
+    const cols = Object.keys(rows[0]);
+    console.log('  columns:', cols.join(', '));
+    for (const row of rows.slice(0, 3)) {
+      const preview = {};
+      for (const [k, v] of Object.entries(row)) {
+        if (v instanceof Buffer) preview[k] = `<Buffer ${v.length}B>`;
+        else if (typeof v === 'string' && v.length > 80) preview[k] = v.slice(0, 80) + '…';
+        else preview[k] = v;
+      }
+      console.log(' ', JSON.stringify(preview));
+    }
+    if (rows.length > 3) console.log(`  ... and ${rows.length - 3} more rows`);
+  }
+  console.log('\n=========================\n');
+}
+
 function opencodeRoots() {
   const home = os.homedir();
   const appdata = process.env.APPDATA || '';
   const local   = process.env.LOCALAPPDATA || '';
-  return [
+  const roots = [
     process.env.XDG_DATA_HOME ? path.join(process.env.XDG_DATA_HOME, 'opencode') : null,
     path.join(home, '.local', 'share', 'opencode'),
     path.join(home, '.config', 'opencode'),
@@ -454,6 +491,20 @@ function opencodeRoots() {
     local   ? path.join(local,   'opencode') : null,
     local   ? path.join(local,   'OpenCode') : null,
   ].filter(Boolean);
+  // Also check snap/flatpak VS Code variants (Linux)
+  try {
+    const snap = path.join(home, 'snap');
+    if (fs.existsSync(snap)) {
+      for (const pkg of fs.readdirSync(snap)) {
+        try {
+          for (const ver of fs.readdirSync(path.join(snap, pkg))) {
+            roots.push(path.join(snap, pkg, ver, '.local', 'share', 'opencode'));
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  return roots;
 }
 
 function scanOpencodeFiles(dir, out, depth) {
@@ -574,4 +625,13 @@ async function main() {
 }
 
 if (process.argv.includes('--scan')) { runScan(); }
+else if (process.argv.includes('--debug-opencode')) {
+  const roots = opencodeRoots();
+  let found = false;
+  for (const r of roots) {
+    const dbPath = path.join(r, 'opencode.db');
+    if (fs.existsSync(dbPath)) { debugOpencodeDB(dbPath); found = true; break; }
+  }
+  if (!found) console.log('opencode.db not found. Run --scan to see all directories checked.');
+}
 else { main().catch(e => { console.error(String(e)); process.exit(1); }); }
