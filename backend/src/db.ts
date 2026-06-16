@@ -32,7 +32,8 @@ db.exec(`
     received_at TEXT NOT NULL,   -- when the backend stored it (retention basis)
     tokens_in INTEGER, tokens_out INTEGER,
     tokens_cache_read INTEGER, tokens_cache_create INTEGER,
-    model_confidence TEXT
+    model_confidence TEXT,
+    agent_account_id TEXT  -- org UUID (Claude) or email (OpenCode) of the logged-in account
   );
   CREATE INDEX IF NOT EXISTS idx_coder ON interactions(coder);
   CREATE TABLE IF NOT EXISTS access_log (
@@ -43,6 +44,13 @@ db.exec(`
     detail TEXT
   );
 `);
+
+// Migrate existing DBs — safe no-op if column already present.
+try {
+  db.exec('ALTER TABLE interactions ADD COLUMN agent_account_id TEXT');
+} catch {
+  /* column already exists */
+}
 
 export interface IngestRow {
   interactionId: string;
@@ -59,16 +67,17 @@ export interface IngestRow {
   timestamp: string | null;
   tokens: { input: number; output: number; cacheRead: number; cacheCreate: number };
   modelConfidence: string;
+  agentAccountId?: string | null;
 }
 
 const insert = db.prepare(`
   INSERT OR IGNORE INTO interactions
   (interaction_id, coder, ips, agent, model, prompt, task_class, task_confidence,
    workspace, git_branch, session_id, ts, received_at,
-   tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model_confidence)
+   tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model_confidence, agent_account_id)
   VALUES (@interaction_id,@coder,@ips,@agent,@model,@prompt,@task_class,@task_confidence,
    @workspace,@git_branch,@session_id,@ts,@received_at,
-   @tokens_in,@tokens_out,@tokens_cache_read,@tokens_cache_create,@model_confidence)
+   @tokens_in,@tokens_out,@tokens_cache_read,@tokens_cache_create,@model_confidence,@agent_account_id)
 `);
 
 export function ingestMany(rows: IngestRow[]): number {
@@ -95,6 +104,7 @@ export function ingestMany(rows: IngestRow[]): number {
         tokens_cache_read: r.tokens.cacheRead,
         tokens_cache_create: r.tokens.cacheCreate,
         model_confidence: r.modelConfidence,
+        agent_account_id: r.agentAccountId ?? null,
       });
       n += info.changes;
     }
@@ -112,6 +122,7 @@ export interface CoderSummary {
   tokens_out: number;
   simple_on_opus: number;
   ips: string[];
+  agent_accounts: string[]; // distinct account IDs seen for this coder
 }
 
 export interface TokensByModel {
@@ -151,7 +162,13 @@ export function summaryByCoder(): CoderSummary[] {
         /* ignore */
       }
     }
-    return { ...r, ips: [...ips] } as CoderSummary;
+    const acctRows = db
+      .prepare(
+        'SELECT DISTINCT agent_account_id FROM interactions WHERE coder=? AND agent_account_id IS NOT NULL'
+      )
+      .all(r.coder) as any[];
+    const agent_accounts = acctRows.map((a: any) => a.agent_account_id as string);
+    return { ...r, ips: [...ips], agent_accounts } as CoderSummary;
   });
 }
 
@@ -177,7 +194,7 @@ export function tokensByModel(): TokensByModel[] {
 export function interactionsForCoder(coder: string, limit = 100): any[] {
   return db
     .prepare(
-      `SELECT interaction_id, ts, agent, model, task_class, prompt, git_branch
+      `SELECT interaction_id, ts, agent, model, agent_account_id, task_class, prompt, git_branch
        FROM interactions WHERE coder=? ORDER BY ts DESC LIMIT ?`
     )
     .all(coder, limit);

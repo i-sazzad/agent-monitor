@@ -8,19 +8,25 @@
  */
 import { createHash } from 'crypto';
 import { readClaude, readOpencode, RawSession } from './parsers';
-import { coderLogin, localIps } from './identity';
+import { coderLogin, localIps, claudeAccountId, opencodeAccountId } from './identity';
 import { classify } from './classify';
 import { redact } from './redact';
 import { Interaction } from './types';
 import { saveNew, storePath } from './store';
 
-function toInteraction(raw: RawSession, coder: string, ips: string[]): Interaction {
+function toInteraction(
+  raw: RawSession,
+  coder: string,
+  ips: string[],
+  accounts: { claude: string | null; opencode: string | null }
+): Interaction {
   const c = classify(raw.prompt);
   const idSeed = `${coder}|${raw.agent}|${raw.sessionId}|${raw.timestamp}`;
   return {
     interactionId: createHash('sha1').update(idSeed).digest('hex').slice(0, 16),
     coder,
     ips,
+    agentAccountId: raw.agent === 'claude_code' ? accounts.claude : accounts.opencode,
     agent: raw.agent,
     model: raw.model,
     prompt: redact(raw.prompt),
@@ -52,10 +58,12 @@ async function shipToBackend(url: string, records: Interaction[]): Promise<void>
 async function main(): Promise<void> {
   const coder = coderLogin();
   const ips = localIps();
+  const accounts = { claude: claudeAccountId(), opencode: opencodeAccountId() };
   const raws = [...readClaude(), ...readOpencode()];
-  const records = raws.map((r) => toInteraction(r, coder, ips));
+  const records = raws.map((r) => toInteraction(r, coder, ips, accounts));
   console.log(
-    `Captured for coder="${coder}" ip=[${ips.join(', ') || 'none'}]: ${records.length} session(s) read.`
+    `Captured for coder="${coder}" ip=[${ips.join(', ') || 'none'}]: ${records.length} session(s) read.` +
+    `\n  Claude account org: ${accounts.claude ?? '(not found)'} | OpenCode account: ${accounts.opencode ?? '(not found)'}`
   );
 
   // On a coder's machine, set INGEST_URL to POST to the central backend.

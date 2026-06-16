@@ -8,6 +8,8 @@ export interface Interaction {
   coder: string;
   /** Context signal only — NOT a per-person key (office NAT/VPN make it weak). */
   ips: string[];
+  /** Account identifier for the agent: organizationUuid for Claude Code, email for OpenCode. */
+  agentAccountId: string | null;
   agent: 'claude_code' | 'opencode';
   model: string | null;
   /** Redacted prompt text — secrets stripped before storage (§7). */

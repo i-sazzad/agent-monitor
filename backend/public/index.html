@@ -54,7 +54,8 @@
           <thead><tr>
             <th>Coder</th><th class="right">Sessions</th><th class="right">Claude</th>
             <th class="right">OpenCode</th><th class="right">Tokens (in/out)</th>
-            <th class="right">Est. cost</th><th class="right">Simple→Opus</th><th>IPs</th>
+            <th class="right">Est. cost</th><th class="right">Simple→Opus</th>
+            <th>Account IDs</th><th>IPs</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -128,6 +129,7 @@
           <td class="right">${(c.tokens_in||0).toLocaleString()} / ${(c.tokens_out||0).toLocaleString()}</td>
           <td class="right">~$${cost.toFixed(2)}</td>
           <td class="right ${c.simple_on_opus>0?'warn':''}">${c.simple_on_opus}</td>
+          <td class="muted" style="font-size:11px">${(c.agent_accounts||[]).map(a=>`<span class="pill">${a}</span>`).join(' ')||'—'}</td>
           <td class="muted">${(c.ips||[]).join(', ')||'—'}</td>`;
         tr.onclick = () => drill(c.coder);
         tb.appendChild(tr);
@@ -179,7 +181,7 @@
       $('#drill').classList.remove('hidden');
       $('#drillCoder').textContent = coder;
       const rows = data.interactions.map(i =>
-        `<div style="margin-bottom:10px"><div class="muted" style="font-size:12px">${i.ts||''} · ${i.model||'?'} · ${i.task_class} · ${i.git_branch||'-'}</div><pre>${(i.prompt||'(no prompt)').replace(/</g,'&lt;')}</pre></div>`).join('');
+        `<div style="margin-bottom:10px"><div class="muted" style="font-size:12px">${i.ts||''} · ${i.model||'?'} · ${i.task_class} · ${i.git_branch||'-'}${i.agent_account_id?' · <span class="pill">'+i.agent_account_id+'</span>':''}</div><pre>${(i.prompt||'(no prompt)').replace(/</g,'&lt;')}</pre></div>`).join('');
       $('#drillBody').innerHTML = rows || '<p class="muted">No prompts.</p>';
       $('#drill').scrollIntoView({ behavior:'smooth' });
     }
