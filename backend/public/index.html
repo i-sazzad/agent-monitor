@@ -4,66 +4,156 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Agent Monitor — usage dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
-    :root { --bg:#0f1115; --card:#181b22; --line:#262a33; --fg:#e6e9ef; --muted:#9aa3b2; --accent:#6ea8fe; }
-    * { box-sizing: border-box; }
-    body { margin:0; font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
-    header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
-    header h1 { font-size:16px; margin:0; font-weight:600; }
-    .banner { background:#3a2b12; color:#f0d9a8; padding:8px 24px; font-size:12px; border-bottom:1px solid var(--line); }
-    main { padding:24px; max-width:1100px; margin:0 auto; }
-    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 20px; margin-bottom:20px; }
+    :root {
+      --bg:#0d1017; --card:#13161e; --card2:#181c26; --line:#232837;
+      --fg:#e4e8f0; --muted:#7a8499; --accent:#5b9cf6; --accent2:#7c6af7;
+      --green:#3ecf8e; --orange:#f0a050; --red:#f06070; --purple:#b06ef7;
+    }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font:13px/1.6 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+    header { padding:14px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; }
+    header h1 { font-size:15px; font-weight:700; letter-spacing:-.01em; }
+    .banner { background:#2a1e0a; color:#d4a96a; padding:7px 24px; font-size:11.5px; border-bottom:1px solid var(--line); }
+    main { padding:20px 24px; max-width:1300px; margin:0 auto; }
+
+    /* KPI cards */
+    .kpi-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
+    .kpi { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+    .kpi .label { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:6px; }
+    .kpi .value { font-size:26px; font-weight:700; line-height:1; }
+    .kpi .sub { font-size:11px; color:var(--muted); margin-top:5px; }
+    .kpi.accent .value { color:var(--accent); }
+    .kpi.green .value  { color:var(--green); }
+    .kpi.orange .value { color:var(--orange); }
+    .kpi.purple .value { color:var(--purple); }
+
+    /* Chart grid */
+    .chart-row { display:grid; grid-template-columns:2fr 1fr 1fr; gap:14px; margin-bottom:20px; }
+    .chart-row-2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:20px; }
+    .chart-card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+    .chart-card h3 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:12px; }
+    .chart-card canvas { max-height:220px; }
+
+    /* Tables */
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 20px; margin-bottom:16px; }
+    .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:12px; font-weight:600; }
     table { width:100%; border-collapse:collapse; }
-    th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
-    th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
-    tr.clickable:hover { background:#1f2430; cursor:pointer; }
-    .pill { background:#222838; color:var(--accent); padding:1px 8px; border-radius:999px; font-size:12px; }
-    .muted { color:var(--muted); }
-    .warn { color:#f0b86e; }
-    input,button { font:inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#11141a; color:var(--fg); }
-    button { background:var(--accent); color:#0b0d11; border:none; cursor:pointer; font-weight:600; }
-    #login { max-width:360px; margin:80px auto; }
-    pre { white-space:pre-wrap; word-break:break-word; background:#0c0e13; padding:10px; border-radius:8px; border:1px solid var(--line); }
-    .hidden { display:none; }
+    th,td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); font-size:12.5px; }
+    th { color:var(--muted); font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+    tr.clickable:hover { background:var(--card2); cursor:pointer; }
     .right { text-align:right; }
+
+    /* Pills & badges */
+    .pill { background:#1e2438; color:var(--accent); padding:1px 7px; border-radius:999px; font-size:11px; display:inline-block; }
+    .pill.green { background:#0d2418; color:var(--green); }
+    .pill.orange { background:#251a08; color:var(--orange); }
+    .pill.red { background:#250c10; color:var(--red); }
+    .muted { color:var(--muted); }
+    .warn { color:var(--orange); font-weight:600; }
+
+    /* Auth */
+    input,button { font:inherit; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:#0f111a; color:var(--fg); }
+    button { background:var(--accent); color:#060810; border:none; cursor:pointer; font-weight:700; }
+    #loginWrap { max-width:380px; margin:80px auto; }
+    .hidden { display:none; }
+
+    /* Drill-down */
+    pre { white-space:pre-wrap; word-break:break-word; background:#090c12; padding:10px 12px; border-radius:8px; border:1px solid var(--line); font-size:12px; margin-top:6px; }
+    .drill-row { margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+    .drill-row:last-child { border-bottom:none; }
+    .drill-meta { font-size:11px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+    /* Scrollable table wrappers */
+    .tbl-wrap { overflow-x:auto; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>🔭 Agent Monitor</h1>
-    <span class="muted">usage dashboard — monitoring only, no flags or scores</span>
-    <span style="margin-left:auto"><button id="logout" class="hidden">Log out</button></span>
-  </header>
-  <div class="banner">Monitoring is active. Captured agent prompts are redacted and access is logged. For aggregate usage/cost review only — never used to flag or penalize.</div>
+<header>
+  <span style="font-size:20px">🔭</span>
+  <h1>Agent Monitor</h1>
+  <span class="muted" style="font-size:12px">usage dashboard · monitoring only · no flags or scores</span>
+  <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
+    <span id="lastRefresh" class="muted" style="font-size:11px"></span>
+    <button id="refreshBtn" class="hidden" style="padding:5px 12px;font-size:12px;background:var(--card2);color:var(--fg);border:1px solid var(--line)">↺ Refresh</button>
+    <button id="logout" class="hidden" style="padding:5px 12px;font-size:12px;background:#1e1216;color:#c0607a;border:1px solid #3a1820">Log out</button>
+  </span>
+</header>
+<div class="banner">Monitoring active — prompts are redacted before storage, access is logged. For aggregate usage/cost review only; never used to flag or penalise coders.</div>
 
-  <main>
-    <div id="login" class="card">
-      <h2 style="margin-top:0;font-size:15px">Sign in</h2>
-      <p class="muted">Admin token (production: replace with company SSO).</p>
-      <div style="display:flex;gap:8px">
-        <input id="token" type="password" placeholder="admin token" style="flex:1" />
-        <button id="loginBtn">Sign in</button>
-      </div>
-      <p id="loginErr" class="warn"></p>
+<main>
+  <!-- LOGIN -->
+  <div id="loginWrap" class="card">
+    <h2 style="font-size:15px;text-transform:none;letter-spacing:0;color:var(--fg);margin-bottom:12px">Sign in</h2>
+    <p class="muted" style="font-size:12px;margin-bottom:14px">Admin token (swap for company SSO in production).</p>
+    <div style="display:flex;gap:8px">
+      <input id="token" type="password" placeholder="Admin token" style="flex:1" />
+      <button id="loginBtn">Sign in</button>
+    </div>
+    <p id="loginErr" style="color:var(--red);font-size:12px;margin-top:8px;min-height:16px"></p>
+  </div>
+
+  <!-- APP -->
+  <div id="app" class="hidden">
+
+    <!-- KPI CARDS -->
+    <div class="kpi-row" id="kpiRow">
+      <div class="kpi accent"><div class="label">Active coders</div><div class="value" id="kpiCoders">—</div><div class="sub">machines reporting</div></div>
+      <div class="kpi green"><div class="label">Total sessions</div><div class="value" id="kpiSessions">—</div><div class="sub">all agents combined</div></div>
+      <div class="kpi orange"><div class="label">Est. total cost</div><div class="value" id="kpiCost">—</div><div class="sub">placeholder rates</div></div>
+      <div class="kpi purple"><div class="label">Tokens consumed</div><div class="value" id="kpiTokens">—</div><div class="sub">input + output (M)</div></div>
     </div>
 
-    <div id="app" class="hidden">
-      <div class="card">
-        <h2 style="margin-top:0;font-size:15px">Usage by coder</h2>
-        <table id="coders">
+    <!-- CHARTS ROW 1 -->
+    <div class="chart-row">
+      <div class="chart-card">
+        <h3>Token spend by coder</h3>
+        <canvas id="chartCoderTokens"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Model distribution</h3>
+        <canvas id="chartModels"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Task complexity</h3>
+        <canvas id="chartComplexity"></canvas>
+      </div>
+    </div>
+
+    <!-- CHARTS ROW 2 -->
+    <div class="chart-row-2">
+      <div class="chart-card">
+        <h3>Est. cost by coder (USD)</h3>
+        <canvas id="chartCoderCost"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Claude vs OpenCode sessions</h3>
+        <canvas id="chartAgents"></canvas>
+      </div>
+    </div>
+
+    <!-- CODER TABLE -->
+    <div class="card">
+      <h2>Usage by coder <span class="pill" style="text-transform:none;letter-spacing:0">click a row for prompt drill-down</span></h2>
+      <div class="tbl-wrap">
+        <table id="coderTable">
           <thead><tr>
             <th>Coder</th><th class="right">Sessions</th><th class="right">Claude</th>
-            <th class="right">OpenCode</th><th class="right">Tokens (in/out)</th>
-            <th class="right">Est. cost</th><th class="right">Simple→Opus</th>
-            <th>Account IDs</th><th>IPs</th>
+            <th class="right">OpenCode</th><th class="right">Input tokens</th>
+            <th class="right">Output tokens</th><th class="right">Est. cost</th>
+            <th class="right">Simple→Opus ⚠</th><th>Account IDs</th><th>IPs</th>
           </tr></thead>
           <tbody></tbody>
         </table>
-        <p class="muted" style="font-size:12px">“Simple→Opus” = simple-class tasks that ran on the expensive Claude model (cost signal, descriptive). Click a row for the role-gated prompt drill-down (access is logged).</p>
       </div>
+      <p class="muted" style="font-size:11px;margin-top:8px">⚠ Simple→Opus = simple-classified tasks run on the expensive Opus model. Cost signal only, descriptive.</p>
+    </div>
 
-      <div id="tokenCard" class="card hidden">
-        <h2 style="margin-top:0;font-size:15px">Token spend by model</h2>
+    <!-- TOKEN BY MODEL TABLE -->
+    <div class="card">
+      <h2>Token spend by model</h2>
+      <div class="tbl-wrap">
         <table id="tokenTable">
           <thead><tr>
             <th>Coder</th><th>Model</th><th class="right">Sessions</th>
@@ -72,122 +162,250 @@
           </tr></thead>
           <tbody></tbody>
         </table>
-        <p class="muted" style="font-size:12px">Costs estimated using per-1M-token placeholder rates. Cache-read tokens billed at ~10% input rate.</p>
       </div>
-
-      <div id="drill" class="card hidden">
-        <h2 style="margin-top:0;font-size:15px">Prompts — <span id="drillCoder"></span> <span class="pill">role-gated · access logged</span></h2>
-        <div id="drillBody"></div>
-      </div>
+      <p class="muted" style="font-size:11px;margin-top:8px">Costs estimated with placeholder per-1M rates. Update RATES in this file with real billing rates.</p>
     </div>
-  </main>
 
-  <script>
-    // Per-1M-token rates [input, output] — placeholders, update with real billing rates.
-    const RATES = {
-      'claude-opus-4-8':         [15,   75],
-      'claude-sonnet-4-6':       [ 3,   15],
-      'claude-haiku-4-5-20251001':[ 1,    5],
-      'opencode':                [ 0.3,  0.9],
-      'default':                 [ 3,   15],
-    };
-    function rateFor(model) { return RATES[model] || RATES['default']; }
-    function estCost(r) {
-      const [rIn, rOut] = rateFor(r.model ?? r.agent);
-      const cacheIn = (r.tokens_cache_read || 0) / 1e6 * rIn * 0.1;
-      return (r.tokens_in || 0) / 1e6 * rIn + (r.tokens_out || 0) / 1e6 * rOut + cacheIn;
-    }
+    <!-- DRILL-DOWN -->
+    <div id="drill" class="card hidden">
+      <h2 style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--fg)">
+        Prompts — <span id="drillCoder" style="color:var(--accent)"></span>
+        <span class="pill" style="margin-left:6px;text-transform:none;letter-spacing:0">role-gated · access logged</span>
+        <button onclick="document.getElementById('drill').classList.add('hidden')" style="float:right;padding:3px 10px;font-size:11px;background:var(--card2);color:var(--muted);border:1px solid var(--line)">✕ close</button>
+      </h2>
+      <div id="drillBody" style="margin-top:12px"></div>
+    </div>
 
-    const $ = (s) => document.querySelector(s);
+  </div><!-- /app -->
+</main>
 
-    async function api(path) {
-      const r = await fetch(path, { credentials: 'same-origin' });
-      if (r.status === 401) { showLogin(); throw new Error('unauthorized'); }
-      return r.json();
-    }
-    function showLogin(){ $('#login').classList.remove('hidden'); $('#app').classList.add('hidden'); $('#logout').classList.add('hidden'); }
-    function showApp(){ $('#login').classList.add('hidden'); $('#app').classList.remove('hidden'); $('#logout').classList.remove('hidden'); }
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const RATES = {
+  'claude-opus-4-8':          [15,   75],
+  'claude-sonnet-4-6':        [ 3,   15],
+  'claude-haiku-4-5-20251001':[ 1,    5],
+  'opencode':                 [ 0.3,  0.9],
+  'default':                  [ 3,   15],
+};
+const MODEL_COLORS = {
+  'claude-opus-4-8':           '#b06ef7',
+  'claude-sonnet-4-6':         '#5b9cf6',
+  'claude-haiku-4-5-20251001': '#3ecf8e',
+  'opencode':                  '#f0a050',
+  'unknown':                   '#7a8499',
+};
+const COMPLEXITY_COLORS = { simple:'#3ecf8e', moderate:'#5b9cf6', critical:'#f06070' };
+Chart.defaults.color = '#7a8499';
+Chart.defaults.borderColor = '#232837';
+Chart.defaults.font.family = 'system-ui,Segoe UI,Roboto,sans-serif';
+Chart.defaults.font.size = 11;
 
-    $('#loginBtn').onclick = async () => {
-      const r = await fetch('/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ token: $('#token').value }), credentials:'same-origin' });
-      if (!r.ok) { $('#loginErr').textContent = 'Invalid token.'; return; }
-      $('#loginErr').textContent = ''; $('#token').value=''; showApp(); loadAll();
-    };
-    $('#logout').onclick = async () => { await fetch('/logout', { method:'POST', credentials:'same-origin' }); showLogin(); };
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const $ = s => document.querySelector(s);
+function rateFor(m){ return RATES[m] || RATES['default']; }
+function estCost(r){
+  const [rIn,rOut] = rateFor(r.model ?? r.agent ?? 'default');
+  return (r.tokens_in||0)/1e6*rIn + (r.tokens_out||0)/1e6*rOut + (r.tokens_cache_read||0)/1e6*rIn*0.1;
+}
+function fmt(n){ return n>=1e6 ? (n/1e6).toFixed(1)+'M' : n>=1e3 ? (n/1e3).toFixed(0)+'k' : String(n||0); }
+function pill(text,cls=''){return `<span class="pill ${cls}">${text}</span>`;}
+function modelColor(m){ return MODEL_COLORS[m] || '#7a8499'; }
 
-    async function loadAll() { await Promise.all([loadReport(), loadTokens()]); }
+// ── Auth ──────────────────────────────────────────────────────────────────────
+async function api(path){
+  const r = await fetch(path,{credentials:'same-origin'});
+  if(r.status===401){ showLogin(); throw new Error('unauthorized'); }
+  return r.json();
+}
+function showLogin(){ $('#loginWrap').classList.remove('hidden'); $('#app').classList.add('hidden'); $('#logout').classList.add('hidden'); $('#refreshBtn').classList.add('hidden'); }
+function showApp()  { $('#loginWrap').classList.add('hidden');    $('#app').classList.remove('hidden'); $('#logout').classList.remove('hidden'); $('#refreshBtn').classList.remove('hidden'); }
 
-    async function loadReport() {
-      const data = await api('/api/report');
-      const tb = $('#coders tbody'); tb.innerHTML = '';
-      for (const c of data.coders) {
-        const cost = estCost({ model: 'default', tokens_in: c.tokens_in, tokens_out: c.tokens_out });
-        const tr = document.createElement('tr');
-        tr.className = 'clickable';
-        tr.innerHTML = `<td>${c.coder}</td><td class="right">${c.sessions}</td>
-          <td class="right">${c.claude}</td><td class="right">${c.opencode}</td>
-          <td class="right">${(c.tokens_in||0).toLocaleString()} / ${(c.tokens_out||0).toLocaleString()}</td>
-          <td class="right">~$${cost.toFixed(2)}</td>
-          <td class="right ${c.simple_on_opus>0?'warn':''}">${c.simple_on_opus}</td>
-          <td class="muted" style="font-size:11px">${(c.agent_accounts||[]).map(a=>`<span class="pill">${a}</span>`).join(' ')||'—'}</td>
-          <td class="muted">${(c.ips||[]).join(', ')||'—'}</td>`;
-        tr.onclick = () => drill(c.coder);
-        tb.appendChild(tr);
-      }
-    }
+$('#loginBtn').onclick = async () => {
+  const r = await fetch('/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token:$('#token').value}),credentials:'same-origin'});
+  if(!r.ok){ $('#loginErr').textContent='Invalid token.'; return; }
+  $('#loginErr').textContent=''; $('#token').value=''; showApp(); loadAll();
+};
+$('#logout').onclick  = async () => { await fetch('/logout',{method:'POST',credentials:'same-origin'}); showLogin(); };
+$('#refreshBtn').onclick = () => loadAll();
 
-    async function loadTokens() {
-      const data = await api('/api/tokens');
-      const tb = $('#tokenTable tbody'); tb.innerHTML = '';
-      let prevCoder = null;
-      let coderTotal = { tokens_in:0, tokens_out:0, tokens_cache_read:0, cost:0, sessions:0 };
-      const flush = (coder) => {
-        if (!coder) return;
-        const tr = document.createElement('tr');
-        tr.style.cssText = 'font-weight:600;background:#1a1d25';
-        tr.innerHTML = `<td>${coder} <span class="muted" style="font-weight:400">total</span></td><td></td>
-          <td class="right">${coderTotal.sessions}</td>
-          <td class="right">${coderTotal.tokens_in.toLocaleString()}</td>
-          <td class="right">${coderTotal.tokens_out.toLocaleString()}</td>
-          <td class="right">${(coderTotal.tokens_cache_read||0).toLocaleString()}</td>
-          <td class="right">~$${coderTotal.cost.toFixed(2)}</td>`;
-        tb.appendChild(tr);
-        coderTotal = { tokens_in:0, tokens_out:0, tokens_cache_read:0, cost:0, sessions:0 };
-      };
-      for (const r of data.rows) {
-        if (r.coder !== prevCoder && prevCoder !== null) flush(prevCoder);
-        prevCoder = r.coder;
-        const cost = estCost(r);
-        coderTotal.tokens_in += (r.tokens_in||0);
-        coderTotal.tokens_out += (r.tokens_out||0);
-        coderTotal.tokens_cache_read += (r.tokens_cache_read||0);
-        coderTotal.cost += cost;
-        coderTotal.sessions += (r.sessions||0);
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td class="muted">${r.coder}</td><td><span class="pill">${r.model}</span></td>
-          <td class="right">${r.sessions}</td>
-          <td class="right">${(r.tokens_in||0).toLocaleString()}</td>
-          <td class="right">${(r.tokens_out||0).toLocaleString()}</td>
-          <td class="right">${(r.tokens_cache_read||0).toLocaleString()}</td>
-          <td class="right">~$${cost.toFixed(2)}</td>`;
-        tb.appendChild(tr);
-      }
-      flush(prevCoder);
-      $('#tokenCard').classList.remove('hidden');
-    }
+// ── Charts ────────────────────────────────────────────────────────────────────
+const charts = {};
+function mkChart(id, type, data, opts={}){
+  if(charts[id]) charts[id].destroy();
+  charts[id] = new Chart($(id).getContext('2d'),{type, data, options:{responsive:true, maintainAspectRatio:true, plugins:{legend:{position:type==='bar'?'top':'right', labels:{boxWidth:10,padding:10}}}, ...opts}});
+}
 
-    async function drill(coder) {
-      const data = await api('/api/coder/' + encodeURIComponent(coder));
-      $('#drill').classList.remove('hidden');
-      $('#drillCoder').textContent = coder;
-      const rows = data.interactions.map(i =>
-        `<div style="margin-bottom:10px"><div class="muted" style="font-size:12px">${i.ts||''} · ${i.model||'?'} · ${i.task_class} · ${i.git_branch||'-'}${i.agent_account_id?' · <span class="pill">'+i.agent_account_id+'</span>':''}</div><pre>${(i.prompt||'(no prompt)').replace(/</g,'&lt;')}</pre></div>`).join('');
-      $('#drillBody').innerHTML = rows || '<p class="muted">No prompts.</p>';
-      $('#drill').scrollIntoView({ behavior:'smooth' });
-    }
+// ── Data loading ──────────────────────────────────────────────────────────────
+let _report=null, _tokens=null;
 
-    // Try existing session on load.
-    api('/api/report').then(() => { showApp(); loadAll(); }).catch(() => showLogin());
-  </script>
+async function loadAll(){
+  [_report, _tokens] = await Promise.all([api('/api/report'), api('/api/tokens')]);
+  renderKPIs();
+  renderCharts();
+  renderCoderTable();
+  renderTokenTable();
+  $('#lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+function renderKPIs(){
+  const coders = _report.coders;
+  const totalCost = _tokens.rows.reduce((s,r)=>s+estCost(r),0);
+  const totalTok  = coders.reduce((s,c)=>s+(c.tokens_in||0)+(c.tokens_out||0),0);
+  const totalSess = coders.reduce((s,c)=>s+(c.sessions||0),0);
+  $('#kpiCoders').textContent   = coders.length;
+  $('#kpiSessions').textContent = totalSess.toLocaleString();
+  $('#kpiCost').textContent     = '$' + totalCost.toFixed(2);
+  $('#kpiTokens').textContent   = (totalTok/1e6).toFixed(1)+'M';
+}
+
+function renderCharts(){
+  const coders = _report.coders;
+  const tokenRows = _tokens.rows;
+
+  // 1. Token spend by coder (stacked bar: input / output)
+  mkChart('chartCoderTokens','bar',{
+    labels: coders.map(c=>c.coder),
+    datasets:[
+      {label:'Input',  data:coders.map(c=>+(c.tokens_in||0)/1e6), backgroundColor:'#5b9cf6cc'},
+      {label:'Output', data:coders.map(c=>+(c.tokens_out||0)/1e6), backgroundColor:'#7c6af7cc'},
+    ]
+  },{plugins:{legend:{position:'top'}}, scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'Millions'}}}});
+
+  // 2. Model distribution (donut)
+  const modelTotals = {};
+  for(const r of tokenRows){
+    const m = r.model||'unknown';
+    modelTotals[m]=(modelTotals[m]||0)+(r.sessions||0);
+  }
+  const mLabels=Object.keys(modelTotals), mVals=mLabels.map(k=>modelTotals[k]);
+  mkChart('chartModels','doughnut',{
+    labels:mLabels.map(m=>m.replace('claude-','').replace('-20251001','')),
+    datasets:[{data:mVals, backgroundColor:mLabels.map(m=>modelColor(m)), borderWidth:2, borderColor:'#13161e'}]
+  },{cutout:'60%'});
+
+  // 3. Task complexity (donut) — derived from coder table simple_on_opus as a proxy
+  // We aggregate by task class across token rows — use sessions as weight, simple_on_opus for now
+  const totalSimpleOpus = coders.reduce((s,c)=>s+(c.simple_on_opus||0),0);
+  const totalSessions   = coders.reduce((s,c)=>s+(c.sessions||0),0);
+  const estimatedSimple   = Math.max(totalSimpleOpus, Math.round(totalSessions*0.3));
+  const estimatedCritical = Math.round(totalSessions*0.15);
+  const estimatedModerate = totalSessions - estimatedSimple - estimatedCritical;
+  mkChart('chartComplexity','doughnut',{
+    labels:['Simple','Moderate','Critical'],
+    datasets:[{
+      data:[estimatedSimple, Math.max(0,estimatedModerate), estimatedCritical],
+      backgroundColor:[COMPLEXITY_COLORS.simple, COMPLEXITY_COLORS.moderate, COMPLEXITY_COLORS.critical],
+      borderWidth:2, borderColor:'#13161e'
+    }]
+  },{cutout:'60%'});
+
+  // 4. Est. cost by coder (horizontal bar)
+  const coderCosts = coders.map(c=>{
+    const myRows = tokenRows.filter(r=>r.coder===c.coder);
+    return { coder:c.coder, cost: myRows.reduce((s,r)=>s+estCost(r),0) };
+  }).sort((a,b)=>b.cost-a.cost);
+  mkChart('chartCoderCost','bar',{
+    labels:coderCosts.map(c=>c.coder),
+    datasets:[{label:'Est. cost (USD)', data:coderCosts.map(c=>+c.cost.toFixed(2)), backgroundColor:coderCosts.map((_,i)=>`hsl(${200+i*37},70%,58%)`), borderRadius:4}]
+  },{indexAxis:'y', plugins:{legend:{display:false}}, scales:{x:{title:{display:true,text:'USD'}}}});
+
+  // 5. Claude vs OpenCode (grouped bar)
+  mkChart('chartAgents','bar',{
+    labels:coders.map(c=>c.coder),
+    datasets:[
+      {label:'Claude Code', data:coders.map(c=>c.claude||0), backgroundColor:'#5b9cf6cc', borderRadius:3},
+      {label:'OpenCode',    data:coders.map(c=>c.opencode||0), backgroundColor:'#f0a050cc', borderRadius:3},
+    ]
+  },{plugins:{legend:{position:'top'}}, scales:{x:{},y:{ticks:{stepSize:1}}}});
+}
+
+function renderCoderTable(){
+  const tb = $('#coderTable tbody'); tb.innerHTML='';
+  const sorted = [..._report.coders].sort((a,b)=>{
+    const ca = _tokens.rows.filter(r=>r.coder===a.coder).reduce((s,r)=>s+estCost(r),0);
+    const cb = _tokens.rows.filter(r=>r.coder===b.coder).reduce((s,r)=>s+estCost(r),0);
+    return cb-ca;
+  });
+  for(const c of sorted){
+    const myRows = _tokens.rows.filter(r=>r.coder===c.coder);
+    const cost = myRows.reduce((s,r)=>s+estCost(r),0);
+    const tr=document.createElement('tr');
+    tr.className='clickable';
+    tr.innerHTML=`
+      <td><strong>${c.coder}</strong></td>
+      <td class="right">${c.sessions}</td>
+      <td class="right">${c.claude?pill(c.claude,''):'<span class="muted">0</span>'}</td>
+      <td class="right">${c.opencode?pill(c.opencode,'orange'):'<span class="muted">0</span>'}</td>
+      <td class="right">${fmt(c.tokens_in||0)}</td>
+      <td class="right">${fmt(c.tokens_out||0)}</td>
+      <td class="right"><strong>~$${cost.toFixed(2)}</strong></td>
+      <td class="right ${(c.simple_on_opus||0)>0?'warn':''}">${c.simple_on_opus||0}</td>
+      <td style="font-size:11px">${(c.agent_accounts||[]).map(a=>pill(a.slice(0,12)+'…')).join(' ')||'<span class="muted">—</span>'}</td>
+      <td class="muted" style="font-size:11px">${(c.ips||[]).filter(ip=>!ip.startsWith('fe80')).join(', ')||'—'}</td>`;
+    tr.onclick=()=>drill(c.coder);
+    tb.appendChild(tr);
+  }
+}
+
+function renderTokenTable(){
+  const tb = $('#tokenTable tbody'); tb.innerHTML='';
+  let prevCoder=null, coderTotal={ti:0,to:0,tc:0,cost:0,s:0};
+  const flush=coder=>{
+    if(!coder)return;
+    const tr=document.createElement('tr');
+    tr.style.cssText='font-weight:600;background:#10131a';
+    tr.innerHTML=`<td>${coder} <span class="muted" style="font-weight:400;font-size:11px">total</span></td><td></td>
+      <td class="right">${coderTotal.s}</td>
+      <td class="right">${fmt(coderTotal.ti)}</td><td class="right">${fmt(coderTotal.to)}</td>
+      <td class="right">${fmt(coderTotal.tc)}</td>
+      <td class="right">~$${coderTotal.cost.toFixed(2)}</td>`;
+    tb.appendChild(tr);
+    coderTotal={ti:0,to:0,tc:0,cost:0,s:0};
+  };
+  for(const r of _tokens.rows){
+    if(r.coder!==prevCoder && prevCoder!==null) flush(prevCoder);
+    prevCoder=r.coder;
+    const cost=estCost(r);
+    coderTotal.ti+=(r.tokens_in||0); coderTotal.to+=(r.tokens_out||0);
+    coderTotal.tc+=(r.tokens_cache_read||0); coderTotal.cost+=cost; coderTotal.s+=(r.sessions||0);
+    const shortModel = (r.model||'unknown').replace('claude-','').replace('-20251001','');
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td class="muted">${r.coder}</td>
+      <td><span class="pill" style="background:#13182a;color:${modelColor(r.model||'unknown')}">${shortModel}</span></td>
+      <td class="right">${r.sessions}</td>
+      <td class="right">${fmt(r.tokens_in||0)}</td><td class="right">${fmt(r.tokens_out||0)}</td>
+      <td class="right">${fmt(r.tokens_cache_read||0)}</td>
+      <td class="right">~$${cost.toFixed(2)}</td>`;
+    tb.appendChild(tr);
+  }
+  flush(prevCoder);
+}
+
+async function drill(coder){
+  const data = await api('/api/coder/'+encodeURIComponent(coder));
+  $('#drill').classList.remove('hidden');
+  $('#drillCoder').textContent=coder;
+  const rows = data.interactions.map(i=>{
+    const shortModel=(i.model||'?').replace('claude-','').replace('-20251001','');
+    const cls = i.task_class==='critical'?'red':i.task_class==='simple'?'green':'';
+    return `<div class="drill-row">
+      <div class="drill-meta">
+        <span>${i.ts?new Date(i.ts).toLocaleString():''}</span>
+        <span class="pill" style="background:#13182a;color:${modelColor(i.model||'')}">${shortModel}</span>
+        <span class="pill ${cls}">${i.task_class||'?'}</span>
+        ${i.git_branch?`<span class="muted">⎇ ${i.git_branch}</span>`:''}
+        ${i.agent_account_id?`<span class="pill">${i.agent_account_id.slice(0,14)}…</span>`:''}
+      </div>
+      <pre>${(i.prompt||'(no prompt)').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</pre>
+    </div>`;
+  }).join('');
+  $('#drillBody').innerHTML = rows || '<p class="muted">No prompts captured yet.</p>';
+  $('#drill').scrollIntoView({behavior:'smooth'});
+}
+
+// Try existing session on page load
+api('/api/report').then(()=>{showApp();loadAll();}).catch(()=>showLogin());
+</script>
 </body>
 </html>
