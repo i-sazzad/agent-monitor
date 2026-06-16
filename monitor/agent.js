@@ -213,75 +213,170 @@ function readClaude() {
   return res;
 }
 
-// ── Parse OpenCode session logs ───────────────────────────────────────────────
-function parseOpencodeFile(full, res) {
-  let raw;
-  try { raw = fs.readFileSync(full, 'utf8'); } catch { return; }
-
-  // Try JSONL first (one JSON object per line)
-  if (full.endsWith('.jsonl') || raw.trimStart().startsWith('{')) {
-    const lines = raw.split('\n').map(l => { try { return l.trim() ? JSON.parse(l.trim()) : null; } catch { return null; } }).filter(Boolean);
-    if (lines.length > 0) {
-      // Group by session: each user turn becomes one record
-      let sessionId = null, workspace = null, model = null;
-      for (const x of lines) {
-        if (!sessionId) sessionId = x.sessionID || x.session_id || x.id || null;
-        if (!workspace) workspace = x.cwd || x.workspace || x.path || null;
-        if (!model)     model     = x.model || x.modelID || x.model_id || null;
-      }
-      for (const x of lines) {
-        const isUser = x.role === 'user' || x.type === 'user' || x.speaker === 'human';
-        if (!isUser) continue;
-        const content = x.text || x.content || x.message || x.prompt;
-        const prompt = typeof content === 'string' ? content.trim() || null
-                     : Array.isArray(content) ? (content.find(b => b && b.type === 'text') || {}).text || null
-                     : null;
-        if (!prompt) continue;
-        const u = x.usage || x.tokens || {};
-        res.push({ agent: 'opencode', model, prompt, workspace, gitBranch: null,
-          sessionId: sessionId || sha1(full).slice(0,16),
-          timestamp: x.time || x.timestamp || x.created_at || null,
-          tokens: { input: Number(u.input || u.input_tokens || 0)||0, output: Number(u.output || u.output_tokens || 0)||0, cacheRead: 0, cacheCreate: 0 },
-          modelConfidence: 'inferred' });
-      }
-      if (res.length) return;
-    }
+// ── Parse OpenCode SQLite database ───────────────────────────────────────────
+function findSqlite3() {
+  const candidates = ['sqlite3'];
+  if (process.platform === 'win32') {
+    candidates.push(
+      'C:\\sqlite\\sqlite3.exe',
+      'C:\\sqlite3\\sqlite3.exe',
+      'C:\\Program Files\\SQLite\\sqlite3.exe',
+      path.join(os.homedir(), 'sqlite3.exe'),
+      path.join(os.homedir(), 'Downloads', 'sqlite3.exe'),
+    );
   }
-
-  // Fallback: try as a single JSON object or array
-  try {
-    const o = JSON.parse(raw);
-    const recs = Array.isArray(o) ? o : [o];
-    const r = { agent: 'opencode', model: null, prompt: null, workspace: null, gitBranch: null, sessionId: null, timestamp: null, tokens: emptyTok(), modelConfidence: 'inferred' };
-    for (const x of recs) {
-      if (!x || typeof x !== 'object') continue;
-      if (!r.model)     r.model     = x.model || x.modelID || x.model_id || null;
-      if (!r.sessionId) r.sessionId = x.sessionID || x.session_id || x.id || null;
-      if (!r.workspace) r.workspace = x.cwd || x.workspace || x.path || null;
-      if (!r.timestamp) r.timestamp = x.time || x.timestamp || x.created_at || null;
-      if (!r.prompt && (x.role === 'user' || x.type === 'user' || x.speaker === 'human')) {
-        const c = x.text || x.content || x.message || x.prompt;
-        r.prompt = typeof c === 'string' ? c.trim() || null : null;
-      }
-      const u = x.usage || x.tokens || {};
-      r.tokens.input  += Number(u.input  || u.input_tokens  || 0) || 0;
-      r.tokens.output += Number(u.output || u.output_tokens || 0) || 0;
-    }
-    if (r.prompt || r.sessionId) res.push(r);
-  } catch {}
+  for (const c of candidates) {
+    try { execSync(`"${c}" --version`, { stdio:'ignore', timeout:3000, windowsHide:true }); return c; } catch {}
+  }
+  return null;
 }
 
-function walkOpencode(dir, res, depth) {
-  if (depth > 6) return;
-  let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of entries) {
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) { walkOpencode(full, res, depth + 1); continue; }
-    if (!e.isFile()) continue;
-    if (!e.name.endsWith('.json') && !e.name.endsWith('.jsonl')) continue;
-    parseOpencodeFile(full, res);
+function sqliteJSON(cli, db, sql) {
+  try {
+    const out = execSync(`"${cli}" -json -readonly "${db}" "${sql.replace(/"/g, "'")}"`, {
+      encoding:'utf8', timeout:30000, windowsHide:true,
+      stdio:['ignore','pipe','ignore'], maxBuffer:200*1024*1024,
+    });
+    return JSON.parse(out || '[]');
+  } catch { return []; }
+}
+
+function sqliteCols(cli, db, table) {
+  return sqliteJSON(cli, db, `PRAGMA table_info(${table})`).map(c => c.name);
+}
+
+function readOpencodeDB(dbPath) {
+  const cli = findSqlite3();
+  if (!cli) {
+    console.log('[opencode] sqlite3 not in PATH — install from https://sqlite.org/download.html and add to PATH');
+    return [];
   }
+
+  // Discover schema
+  let tables;
+  try {
+    const raw = execSync(`"${cli}" "${dbPath}" ".tables"`,
+      { encoding:'utf8', timeout:5000, windowsHide:true, stdio:['ignore','pipe','ignore'] });
+    tables = (raw||'').trim().split(/\s+/).filter(Boolean);
+  } catch(e) { console.log('[opencode] DB open error:', e.message); return []; }
+
+  console.log('[opencode] tables:', tables.join(', '));
+
+  if (!tables.includes('message')) {
+    console.log('[opencode] no message table found — schema not recognised');
+    return [];
+  }
+
+  const msgCols  = sqliteCols(cli, dbPath, 'message');
+  const sesCols  = tables.includes('session') ? sqliteCols(cli, dbPath, 'session') : [];
+  const partCols = tables.includes('part')    ? sqliteCols(cli, dbPath, 'part')    : [];
+
+  // Resolve column names across schema versions
+  const mTime  = ['time','created_at','timestamp'].find(c => msgCols.includes(c)) || null;
+  const mRole  = ['role','type','speaker'].find(c => msgCols.includes(c)) || null;
+  const mSesId = ['session_id','sessionId','session'].find(c => msgCols.includes(c)) || null;
+  const sCwd   = ['cwd','path','directory','workspace'].find(c => sesCols.includes(c)) || null;
+  const sModel = ['model','model_id','modelId'].find(c => sesCols.includes(c)) || null;
+
+  if (!mRole) { console.log('[opencode] cannot find role column in message:', msgCols.join(',')); return []; }
+
+  // Build user-message query
+  const sel = [
+    `m.id`,
+    mSesId ? `m.${mSesId} AS session_id` : `NULL AS session_id`,
+    mTime  ? `m.${mTime}  AS time`        : `NULL AS time`,
+    sCwd   ? `s.${sCwd}   AS cwd`         : `NULL AS cwd`,
+    sModel ? `s.${sModel} AS model`       : `NULL AS model`,
+  ].join(', ');
+  const join = (tables.includes('session') && mSesId && sCwd)
+    ? `LEFT JOIN session s ON s.id = m.${mSesId}` : '';
+  const userRoles = ["'user'", "'human'"].join(',');
+
+  const messages = sqliteJSON(cli, dbPath,
+    `SELECT ${sel} FROM message m ${join} WHERE m.${mRole} IN (${userRoles}) ORDER BY ${mTime || 'm.id'}`);
+
+  if (!messages.length) { console.log('[opencode] 0 user messages found'); return []; }
+
+  // Get content from part table or message table
+  const contentCol = ['content','text','body'].find(c => msgCols.includes(c)) || null;
+  const pContent   = ['content','text','body'].find(c => partCols.includes(c)) || null;
+  const pMsgId     = ['message_id','messageId','msg_id'].find(c => partCols.includes(c)) || null;
+  const pType      = ['type'].find(c => partCols.includes(c)) || null;
+  const pTokIn     = ['tokens_input','input_tokens','tokens_in'].find(c => partCols.includes(c)) || null;
+  const pTokOut    = ['tokens_output','output_tokens','tokens_out'].find(c => partCols.includes(c)) || null;
+
+  // Load parts indexed by message_id for token counts
+  const partsByMsg = {};
+  if (tables.includes('part') && pMsgId) {
+    const parts = sqliteJSON(cli, dbPath, `SELECT * FROM part WHERE ${pType ? `${pType}='text' OR ${pType}='tool-result' OR ` : ''}1=1 LIMIT 50000`);
+    for (const p of parts) {
+      const mid = p[pMsgId] || p.message_id;
+      if (!partsByMsg[mid]) partsByMsg[mid] = [];
+      partsByMsg[mid].push(p);
+    }
+  }
+
+  // Look ahead: get assistant messages for token counts (when content is in message table)
+  const assistantTok = {};
+  if (contentCol) {
+    const assMsgs = sqliteJSON(cli, dbPath,
+      `SELECT m.id, ${mSesId ? `m.${mSesId} AS session_id,` : ''} ${mTime ? `m.${mTime} AS time,` : ''} m.${contentCol} AS content FROM message m WHERE m.${mRole} IN ('assistant','ai') LIMIT 10000`);
+    for (const a of assMsgs) assistantTok[a.session_id] = a; // last assistant per session
+  }
+
+  const results = [];
+  for (const m of messages) {
+    // Extract prompt text
+    let prompt = null;
+    if (contentCol && msgCols.includes(contentCol)) {
+      const raw = m[contentCol] || m.content;
+      if (typeof raw === 'string') {
+        // May be JSON array of content blocks
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) prompt = parsed.filter(b=>b&&b.type==='text').map(b=>b.text).join('\n').trim() || null;
+          else if (parsed && parsed.text) prompt = String(parsed.text).trim() || null;
+          else prompt = raw.trim() || null;
+        } catch { prompt = raw.trim() || null; }
+      }
+    }
+    if (!prompt && partsByMsg[m.id]) {
+      const textParts = partsByMsg[m.id].filter(p => !pType || p[pType]==='text' || p[pType]==='content');
+      prompt = textParts.map(p => {
+        const c = pContent ? p[pContent] : p.content || p.text || '';
+        if (typeof c === 'string') { try { const j=JSON.parse(c); return j&&j.text?j.text:c; } catch { return c; } }
+        return '';
+      }).join('\n').trim() || null;
+    }
+    if (!prompt) continue;
+
+    // Token counts from parts of the NEXT assistant message in same session
+    let tokIn = 0, tokOut = 0;
+    const aparts = partsByMsg[m.id] || [];
+    for (const p of aparts) {
+      tokIn  += Number(pTokIn  ? p[pTokIn]  : 0) || 0;
+      tokOut += Number(pTokOut ? p[pTokOut] : 0) || 0;
+    }
+
+    // Timestamp — may be epoch ms or ISO string
+    let ts = m.time || null;
+    if (ts && typeof ts === 'number') ts = new Date(ts).toISOString();
+
+    results.push({
+      agent: 'opencode',
+      model: m.model || null,
+      prompt,
+      workspace: m.cwd || null,
+      gitBranch: null,
+      sessionId: m.session_id || sha1(m.id||prompt).slice(0,16),
+      timestamp: ts,
+      tokens: { input: tokIn, output: tokOut, cacheRead: 0, cacheCreate: 0 },
+      modelConfidence: 'inferred',
+    });
+  }
+
+  console.log(`[opencode] DB → ${results.length} user prompt(s) from ${messages.length} message(s)`);
+  return results;
 }
 
 function opencodeRoots() {
@@ -319,11 +414,17 @@ function scanOpencodeFiles(dir, out, depth) {
 function readOpencode() {
   const roots = opencodeRoots();
   const res = [];
-  const checked = [];
   for (const root of roots) {
-    if (fs.existsSync(root)) { checked.push(root); walkOpencode(root, res, 0); }
+    if (!fs.existsSync(root)) continue;
+    // Prefer SQLite database
+    const dbPath = path.join(root, 'opencode.db');
+    if (fs.existsSync(dbPath)) {
+      console.log(`[opencode] found DB: ${dbPath}`);
+      res.push(...readOpencodeDB(dbPath));
+      return res; // only read first found DB
+    }
   }
-  console.log(`[opencode] searched: ${checked.length ? checked.join(', ') : 'none found'} → ${res.length} session(s)`);
+  if (!res.length) console.log('[opencode] opencode.db not found in any known location');
   return res;
 }
 
