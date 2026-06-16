@@ -213,169 +213,230 @@ function readClaude() {
   return res;
 }
 
-// ── Parse OpenCode SQLite database ───────────────────────────────────────────
-function findSqlite3() {
-  const candidates = ['sqlite3'];
-  if (process.platform === 'win32') {
-    candidates.push(
-      'C:\\sqlite\\sqlite3.exe',
-      'C:\\sqlite3\\sqlite3.exe',
-      'C:\\Program Files\\SQLite\\sqlite3.exe',
-      path.join(os.homedir(), 'sqlite3.exe'),
-      path.join(os.homedir(), 'Downloads', 'sqlite3.exe'),
-    );
-  }
-  for (const c of candidates) {
-    try { execSync(`"${c}" --version`, { stdio:'ignore', timeout:3000, windowsHide:true }); return c; } catch {}
-  }
-  return null;
-}
+// ── Pure-JS SQLite3 binary reader (no external tools needed) ─────────────────
+function parseSQLite(dbPath, wantTables) {
+  const buf = fs.readFileSync(dbPath);
+  if (buf.slice(0,15).toString('ascii') !== 'SQLite format 3') throw new Error('not sqlite3');
 
-function sqliteJSON(cli, db, sql) {
+  const pageSize = buf.readUInt16BE(16) || 65536;
+  const reserved = buf[20];
+  const usable   = pageSize - reserved;
+
+  // Load WAL: later frames override earlier for the same page number
+  const walMap = new Map();
   try {
-    const out = execSync(`"${cli}" -json -readonly "${db}" "${sql.replace(/"/g, "'")}"`, {
-      encoding:'utf8', timeout:30000, windowsHide:true,
-      stdio:['ignore','pipe','ignore'], maxBuffer:200*1024*1024,
-    });
-    return JSON.parse(out || '[]');
-  } catch { return []; }
-}
+    const wal = fs.readFileSync(dbPath + '-wal');
+    const magic = wal.readUInt32BE(0);
+    if (magic === 0x377f0682 || magic === 0x377f0683) {
+      let p = 32;
+      while (p + 24 + pageSize <= wal.length) {
+        const pgNo = wal.readUInt32BE(p);
+        if (pgNo > 0) walMap.set(pgNo, wal.slice(p + 24, p + 24 + pageSize));
+        p += 24 + pageSize;
+      }
+    }
+  } catch {}
 
-function sqliteCols(cli, db, table) {
-  return sqliteJSON(cli, db, `PRAGMA table_info(${table})`).map(c => c.name);
+  const getPage = n => walMap.has(n) ? walMap.get(n)
+    : buf.slice((n-1)*pageSize, n*pageSize);
+
+  // Variable-length integer (big-endian, MSB = continuation)
+  function varint(b, i) {
+    let v = 0;
+    for (let n = 0; n < 9; n++) {
+      const byte = b[i+n];
+      if (n < 8) { v = v*128 + (byte & 0x7f); if (!(byte & 0x80)) return [v, n+1]; }
+      else { v = v*256 + byte; return [v, 9]; }
+    }
+    return [v, 9];
+  }
+
+  // Decode a record payload into an array of JS values
+  function decodeRecord(b) {
+    const [hLen, hs] = varint(b, 0);
+    let p = hs; const types = [];
+    while (p < hLen) { const [t,ts] = varint(b,p); types.push(t); p+=ts; }
+    p = hLen; const row = [];
+    for (const t of types) {
+      if      (t===0)            { row.push(null); }
+      else if (t===1)            { row.push(b.readInt8(p)); p+=1; }
+      else if (t===2)            { row.push(b.readInt16BE(p)); p+=2; }
+      else if (t===3)            { row.push(b.readIntBE(p,3)); p+=3; }
+      else if (t===4)            { row.push(b.readInt32BE(p)); p+=4; }
+      else if (t===5)            { row.push(b.readIntBE(p,6)); p+=6; }
+      else if (t===6)            { row.push(b.readUInt32BE(p)*0x100000000+b.readUInt32BE(p+4)); p+=8; }
+      else if (t===7)            { row.push(b.readDoubleBE(p)); p+=8; }
+      else if (t===8)            { row.push(0); }
+      else if (t===9)            { row.push(1); }
+      else if (t>=12 && t%2===0) { const l=(t-12)/2; row.push(b.slice(p,p+l)); p+=l; }
+      else if (t>=13 && t%2===1) { const l=(t-13)/2; row.push(b.slice(p,p+l).toString('utf8')); p+=l; }
+      else                       { row.push(null); }
+    }
+    return row;
+  }
+
+  // Overflow payload assembly (SQLite spec §2.5)
+  const maxLocal = usable - 35;
+  const minLocal = Math.floor((usable-12)*32/255) - 23;
+
+  function readPayload(pg, off, pSize) {
+    if (pSize <= maxLocal) return pg.slice(off, off + pSize);
+    const K = minLocal + (pSize - minLocal) % (usable - 4);
+    const local = K <= maxLocal ? K : minLocal;
+    const chunks = [pg.slice(off, off + local)];
+    let rem = pSize - local;
+    let ovp = pg.readUInt32BE(off + local);
+    while (rem > 0 && ovp > 0) {
+      const op = getPage(ovp); ovp = op.readUInt32BE(0);
+      const take = Math.min(rem, usable - 4);
+      chunks.push(op.slice(4, 4 + take)); rem -= take;
+    }
+    return Buffer.concat(chunks);
+  }
+
+  // Traverse a table B-tree and collect all [rowId, cols[]] rows
+  function scan(pgNo, rows) {
+    const pg = getPage(pgNo);
+    const h = pgNo === 1 ? 100 : 0;
+    const type = pg[h];
+    const nCells = pg.readUInt16BE(h+3);
+    if (type === 0x0d) {                         // leaf
+      for (let i = 0; i < nCells; i++) {
+        const ptr = pg.readUInt16BE(h+8+i*2);
+        let p = ptr;
+        const [pSize,ps] = varint(pg,p); p+=ps;
+        const [rowId,rs] = varint(pg,p); p+=rs;
+        try { rows.push([rowId, decodeRecord(readPayload(pg, p, pSize))]); } catch {}
+      }
+    } else if (type === 0x05) {                  // interior
+      const right = pg.readUInt32BE(h+8);
+      for (let i = 0; i < nCells; i++) scan(pg.readUInt32BE(pg.readUInt16BE(h+12+i*2)), rows);
+      scan(right, rows);
+    }
+  }
+
+  // Parse CREATE TABLE SQL to extract ordered column names
+  function parseCols(sql) {
+    if (!sql) return [];
+    const m = sql.match(/\(([^]*)\)/);
+    if (!m) return [];
+    const cols = []; let depth=0, start=0;
+    const body = m[1];
+    for (let i=0;i<body.length;i++) {
+      if (body[i]==='(') depth++;
+      else if (body[i]===')') depth--;
+      else if (body[i]===',' && depth===0) { cols.push(body.slice(start,i).trim()); start=i+1; }
+    }
+    cols.push(body.slice(start).trim());
+    return cols.map(c=>{const nm=c.match(/^["'`]?(\w+)/); return nm?nm[1]:null;}).filter(n=>n&&!['PRIMARY','UNIQUE','FOREIGN','CHECK','CONSTRAINT'].includes(n.toUpperCase()));
+  }
+
+  // Read sqlite_master (root = page 1) to find requested tables
+  const masterRows = [];
+  scan(1, masterRows);
+  const tableInfo = {};
+  for (const [,cols] of masterRows) {
+    if (cols[0]==='table' && wantTables.includes(cols[1])) {
+      tableInfo[cols[1]] = { root: cols[3], cols: parseCols(cols[4]) };
+    }
+  }
+
+  // Scan each table and return rows as objects keyed by column name
+  const result = {};
+  for (const [name, info] of Object.entries(tableInfo)) {
+    const rows = [];
+    scan(info.root, rows);
+    result[name] = rows.map(([,vals]) => {
+      const obj = {};
+      info.cols.forEach((c,i) => { obj[c] = vals[i] ?? null; });
+      return obj;
+    });
+  }
+  return result;
 }
 
 function readOpencodeDB(dbPath) {
-  const cli = findSqlite3();
-  if (!cli) {
-    console.log('[opencode] sqlite3 not in PATH — install from https://sqlite.org/download.html and add to PATH');
-    return [];
-  }
-
-  // Discover schema
-  let tables;
+  let data;
   try {
-    const raw = execSync(`"${cli}" "${dbPath}" ".tables"`,
-      { encoding:'utf8', timeout:5000, windowsHide:true, stdio:['ignore','pipe','ignore'] });
-    tables = (raw||'').trim().split(/\s+/).filter(Boolean);
-  } catch(e) { console.log('[opencode] DB open error:', e.message); return []; }
-
-  console.log('[opencode] tables:', tables.join(', '));
-
-  if (!tables.includes('message')) {
-    console.log('[opencode] no message table found — schema not recognised');
+    data = parseSQLite(dbPath, ['session', 'message', 'part']);
+  } catch(e) {
+    console.log('[opencode] DB parse error:', e.message);
     return [];
   }
 
-  const msgCols  = sqliteCols(cli, dbPath, 'message');
-  const sesCols  = tables.includes('session') ? sqliteCols(cli, dbPath, 'session') : [];
-  const partCols = tables.includes('part')    ? sqliteCols(cli, dbPath, 'part')    : [];
-
-  // Resolve column names across schema versions
-  const mTime  = ['time','created_at','timestamp'].find(c => msgCols.includes(c)) || null;
-  const mRole  = ['role','type','speaker'].find(c => msgCols.includes(c)) || null;
-  const mSesId = ['session_id','sessionId','session'].find(c => msgCols.includes(c)) || null;
-  const sCwd   = ['cwd','path','directory','workspace'].find(c => sesCols.includes(c)) || null;
-  const sModel = ['model','model_id','modelId'].find(c => sesCols.includes(c)) || null;
-
-  if (!mRole) { console.log('[opencode] cannot find role column in message:', msgCols.join(',')); return []; }
-
-  // Build user-message query
-  const sel = [
-    `m.id`,
-    mSesId ? `m.${mSesId} AS session_id` : `NULL AS session_id`,
-    mTime  ? `m.${mTime}  AS time`        : `NULL AS time`,
-    sCwd   ? `s.${sCwd}   AS cwd`         : `NULL AS cwd`,
-    sModel ? `s.${sModel} AS model`       : `NULL AS model`,
-  ].join(', ');
-  const join = (tables.includes('session') && mSesId && sCwd)
-    ? `LEFT JOIN session s ON s.id = m.${mSesId}` : '';
-  const userRoles = ["'user'", "'human'"].join(',');
-
-  const messages = sqliteJSON(cli, dbPath,
-    `SELECT ${sel} FROM message m ${join} WHERE m.${mRole} IN (${userRoles}) ORDER BY ${mTime || 'm.id'}`);
-
-  if (!messages.length) { console.log('[opencode] 0 user messages found'); return []; }
-
-  // Get content from part table or message table
-  const contentCol = ['content','text','body'].find(c => msgCols.includes(c)) || null;
-  const pContent   = ['content','text','body'].find(c => partCols.includes(c)) || null;
-  const pMsgId     = ['message_id','messageId','msg_id'].find(c => partCols.includes(c)) || null;
-  const pType      = ['type'].find(c => partCols.includes(c)) || null;
-  const pTokIn     = ['tokens_input','input_tokens','tokens_in'].find(c => partCols.includes(c)) || null;
-  const pTokOut    = ['tokens_output','output_tokens','tokens_out'].find(c => partCols.includes(c)) || null;
-
-  // Load parts indexed by message_id for token counts
-  const partsByMsg = {};
-  if (tables.includes('part') && pMsgId) {
-    const parts = sqliteJSON(cli, dbPath, `SELECT * FROM part WHERE ${pType ? `${pType}='text' OR ${pType}='tool-result' OR ` : ''}1=1 LIMIT 50000`);
-    for (const p of parts) {
-      const mid = p[pMsgId] || p.message_id;
-      if (!partsByMsg[mid]) partsByMsg[mid] = [];
-      partsByMsg[mid].push(p);
-    }
+  const sessions = {};
+  for (const s of (data.session || [])) {
+    const id = s.id || s.sessionId;
+    if (id) sessions[id] = s;
   }
 
-  // Look ahead: get assistant messages for token counts (when content is in message table)
-  const assistantTok = {};
-  if (contentCol) {
-    const assMsgs = sqliteJSON(cli, dbPath,
-      `SELECT m.id, ${mSesId ? `m.${mSesId} AS session_id,` : ''} ${mTime ? `m.${mTime} AS time,` : ''} m.${contentCol} AS content FROM message m WHERE m.${mRole} IN ('assistant','ai') LIMIT 10000`);
-    for (const a of assMsgs) assistantTok[a.session_id] = a; // last assistant per session
+  // Index parts by message_id for token counts
+  const partsByMsg = {};
+  for (const p of (data.part || [])) {
+    const mid = p.message_id || p.messageId;
+    if (!mid) continue;
+    if (!partsByMsg[mid]) partsByMsg[mid] = [];
+    partsByMsg[mid].push(p);
   }
 
   const results = [];
-  for (const m of messages) {
-    // Extract prompt text
+  for (const m of (data.message || [])) {
+    const role = m.role || m.type || m.speaker || '';
+    if (!['user','human'].includes(role)) continue;
+
+    // Extract prompt text — may be JSON content blocks or plain string
     let prompt = null;
-    if (contentCol && msgCols.includes(contentCol)) {
-      const raw = m[contentCol] || m.content;
-      if (typeof raw === 'string') {
-        // May be JSON array of content blocks
-        try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) prompt = parsed.filter(b=>b&&b.type==='text').map(b=>b.text).join('\n').trim() || null;
-          else if (parsed && parsed.text) prompt = String(parsed.text).trim() || null;
-          else prompt = raw.trim() || null;
-        } catch { prompt = raw.trim() || null; }
-      }
+    const raw = m.content || m.text || m.body || '';
+    if (typeof raw === 'string' && raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) prompt = parsed.filter(b=>b&&b.type==='text').map(b=>String(b.text||'')).join('\n').trim()||null;
+        else if (parsed && parsed.text) prompt = String(parsed.text).trim()||null;
+        else prompt = raw.trim()||null;
+      } catch { prompt = raw.trim()||null; }
+    } else if (raw instanceof Buffer) {
+      prompt = raw.toString('utf8').trim() || null;
     }
-    if (!prompt && partsByMsg[m.id]) {
-      const textParts = partsByMsg[m.id].filter(p => !pType || p[pType]==='text' || p[pType]==='content');
-      prompt = textParts.map(p => {
-        const c = pContent ? p[pContent] : p.content || p.text || '';
-        if (typeof c === 'string') { try { const j=JSON.parse(c); return j&&j.text?j.text:c; } catch { return c; } }
-        return '';
-      }).join('\n').trim() || null;
+
+    // Fall back to text parts
+    if (!prompt) {
+      const parts = (partsByMsg[m.id] || []).filter(p => (p.type||'').includes('text') || !p.type);
+      for (const p of parts) {
+        const c = p.content || p.text || '';
+        const t = typeof c === 'string' ? c : (c instanceof Buffer ? c.toString('utf8') : '');
+        if (t) { try { const j=JSON.parse(t); prompt=(j&&j.text?j.text:t).trim()||null; } catch { prompt=t.trim()||null; } }
+        if (prompt) break;
+      }
     }
     if (!prompt) continue;
 
-    // Token counts from parts of the NEXT assistant message in same session
+    const sesId = m.session_id || m.sessionId || null;
+    const ses   = sesId ? (sessions[sesId] || {}) : {};
+
+    // Token counts from assistant parts linked to same message or session
     let tokIn = 0, tokOut = 0;
-    const aparts = partsByMsg[m.id] || [];
-    for (const p of aparts) {
-      tokIn  += Number(pTokIn  ? p[pTokIn]  : 0) || 0;
-      tokOut += Number(pTokOut ? p[pTokOut] : 0) || 0;
+    for (const p of (partsByMsg[m.id] || [])) {
+      tokIn  += Number(p.tokens_input  || p.input_tokens  || p.tokens_in  || 0) || 0;
+      tokOut += Number(p.tokens_output || p.output_tokens || p.tokens_out || 0) || 0;
     }
 
-    // Timestamp — may be epoch ms or ISO string
-    let ts = m.time || null;
-    if (ts && typeof ts === 'number') ts = new Date(ts).toISOString();
+    let ts = m.time || m.created_at || m.timestamp || null;
+    if (typeof ts === 'number') ts = new Date(ts).toISOString();
 
     results.push({
       agent: 'opencode',
-      model: m.model || null,
+      model: ses.model || m.model || null,
       prompt,
-      workspace: m.cwd || null,
+      workspace: ses.cwd || ses.path || ses.directory || m.cwd || null,
       gitBranch: null,
-      sessionId: m.session_id || sha1(m.id||prompt).slice(0,16),
+      sessionId: sesId || sha1(m.id || prompt).slice(0, 16),
       timestamp: ts,
       tokens: { input: tokIn, output: tokOut, cacheRead: 0, cacheCreate: 0 },
       modelConfidence: 'inferred',
     });
   }
 
-  console.log(`[opencode] DB → ${results.length} user prompt(s) from ${messages.length} message(s)`);
+  console.log(`[opencode] DB → ${results.length} user prompt(s)`);
   return results;
 }
 
