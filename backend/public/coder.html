@@ -373,7 +373,8 @@ function bar(label, count, limit) {
 }
 
 function showFC(workspace, fcRows) {
-  const rows = fcRows.filter(f=>f.workspace===workspace);
+  const ws = (workspace||'').toLowerCase().replace(/\\/g,'/');
+  const rows = fcRows.filter(f=>(f.workspace||'').toLowerCase().replace(/\\/g,'/')=== ws);
   $('#fcProject').textContent = projName(workspace);
   const tb = $('#fcTbody'); tb.innerHTML='';
   if (!rows.length) {

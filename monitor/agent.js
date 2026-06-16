@@ -31,7 +31,8 @@ const INGEST_TOKEN = process.env.INGEST_TOKEN || '';
 const CODER        = process.env.CODER_NAME  || (() => {
   try { return os.userInfo().username || 'unknown'; } catch { return 'unknown'; }
 })();
-const CLAUDE_EMAIL = process.env.CLAUDE_ACCOUNT_EMAIL || '';
+const CLAUDE_EMAIL   = process.env.CLAUDE_ACCOUNT_EMAIL   || '';
+const OPENCODE_EMAIL = process.env.OPENCODE_ACCOUNT_EMAIL || '';
 
 if (!INGEST_URL || !INGEST_TOKEN) {
   console.error('ERROR: Set INGEST_URL and INGEST_TOKEN in .env (see agent.env.example)');
@@ -62,6 +63,7 @@ function claudeAccountId() {
 }
 
 function opencodeAccountId() {
+  if (OPENCODE_EMAIL) return OPENCODE_EMAIL;
   const home = os.homedir();
   for (const p of [
     path.join(home, '.config', 'opencode', 'config.json'),
@@ -212,6 +214,63 @@ function readClaude() {
 }
 
 // ── Parse OpenCode session logs ───────────────────────────────────────────────
+function parseOpencodeFile(full, res) {
+  let raw;
+  try { raw = fs.readFileSync(full, 'utf8'); } catch { return; }
+
+  // Try JSONL first (one JSON object per line)
+  if (full.endsWith('.jsonl') || raw.trimStart().startsWith('{')) {
+    const lines = raw.split('\n').map(l => { try { return l.trim() ? JSON.parse(l.trim()) : null; } catch { return null; } }).filter(Boolean);
+    if (lines.length > 0) {
+      // Group by session: each user turn becomes one record
+      let sessionId = null, workspace = null, model = null;
+      for (const x of lines) {
+        if (!sessionId) sessionId = x.sessionID || x.session_id || x.id || null;
+        if (!workspace) workspace = x.cwd || x.workspace || x.path || null;
+        if (!model)     model     = x.model || x.modelID || x.model_id || null;
+      }
+      for (const x of lines) {
+        const isUser = x.role === 'user' || x.type === 'user' || x.speaker === 'human';
+        if (!isUser) continue;
+        const content = x.text || x.content || x.message || x.prompt;
+        const prompt = typeof content === 'string' ? content.trim() || null
+                     : Array.isArray(content) ? (content.find(b => b && b.type === 'text') || {}).text || null
+                     : null;
+        if (!prompt) continue;
+        const u = x.usage || x.tokens || {};
+        res.push({ agent: 'opencode', model, prompt, workspace, gitBranch: null,
+          sessionId: sessionId || sha1(full).slice(0,16),
+          timestamp: x.time || x.timestamp || x.created_at || null,
+          tokens: { input: Number(u.input || u.input_tokens || 0)||0, output: Number(u.output || u.output_tokens || 0)||0, cacheRead: 0, cacheCreate: 0 },
+          modelConfidence: 'inferred' });
+      }
+      if (res.length) return;
+    }
+  }
+
+  // Fallback: try as a single JSON object or array
+  try {
+    const o = JSON.parse(raw);
+    const recs = Array.isArray(o) ? o : [o];
+    const r = { agent: 'opencode', model: null, prompt: null, workspace: null, gitBranch: null, sessionId: null, timestamp: null, tokens: emptyTok(), modelConfidence: 'inferred' };
+    for (const x of recs) {
+      if (!x || typeof x !== 'object') continue;
+      if (!r.model)     r.model     = x.model || x.modelID || x.model_id || null;
+      if (!r.sessionId) r.sessionId = x.sessionID || x.session_id || x.id || null;
+      if (!r.workspace) r.workspace = x.cwd || x.workspace || x.path || null;
+      if (!r.timestamp) r.timestamp = x.time || x.timestamp || x.created_at || null;
+      if (!r.prompt && (x.role === 'user' || x.type === 'user' || x.speaker === 'human')) {
+        const c = x.text || x.content || x.message || x.prompt;
+        r.prompt = typeof c === 'string' ? c.trim() || null : null;
+      }
+      const u = x.usage || x.tokens || {};
+      r.tokens.input  += Number(u.input  || u.input_tokens  || 0) || 0;
+      r.tokens.output += Number(u.output || u.output_tokens || 0) || 0;
+    }
+    if (r.prompt || r.sessionId) res.push(r);
+  } catch {}
+}
+
 function walkOpencode(dir, res, depth) {
   if (depth > 6) return;
   let entries;
@@ -219,39 +278,29 @@ function walkOpencode(dir, res, depth) {
   for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) { walkOpencode(full, res, depth + 1); continue; }
-    if (!e.isFile() || !e.name.endsWith('.json')) continue;
-    try {
-      const o = JSON.parse(fs.readFileSync(full, 'utf8'));
-      const recs = Array.isArray(o) ? o : [o];
-      const r = { agent: 'opencode', model: null, prompt: null, workspace: null, gitBranch: null, sessionId: null, timestamp: null, tokens: emptyTok(), modelConfidence: 'inferred' };
-      for (const x of recs) {
-        if (!x || typeof x !== 'object') continue;
-        if (!r.model)     r.model     = x.model || x.modelID || null;
-        if (!r.sessionId) r.sessionId = x.sessionID || x.id || null;
-        if (!r.timestamp) r.timestamp = x.time || x.timestamp || null;
-        if (!r.prompt && (x.role === 'user' || x.type === 'user')) {
-          const c = x.text || x.content || x.prompt;
-          r.prompt = typeof c === 'string' ? c.trim() || null : null;
-        }
-        const u = x.usage || x.tokens || {};
-        r.tokens.input  += Number(u.input  || u.input_tokens  || 0) || 0;
-        r.tokens.output += Number(u.output || u.output_tokens || 0) || 0;
-      }
-      if (r.prompt || r.sessionId) res.push(r);
-    } catch {}
+    if (!e.isFile()) continue;
+    if (!e.name.endsWith('.json') && !e.name.endsWith('.jsonl')) continue;
+    parseOpencodeFile(full, res);
   }
 }
 
 function readOpencode() {
   const home = os.homedir();
+  const appdata = process.env.APPDATA || '';
   const roots = [
     process.env.XDG_DATA_HOME ? path.join(process.env.XDG_DATA_HOME, 'opencode') : null,
     path.join(home, '.local', 'share', 'opencode'),
     path.join(home, '.config', 'opencode'),
     path.join(home, '.opencode'),
+    appdata ? path.join(appdata, 'opencode') : null,
+    appdata ? path.join(appdata, 'OpenCode') : null,
   ].filter(Boolean);
   const res = [];
-  for (const root of roots) if (fs.existsSync(root)) walkOpencode(root, res, 0);
+  const checked = [];
+  for (const root of roots) {
+    if (fs.existsSync(root)) { checked.push(root); walkOpencode(root, res, 0); }
+  }
+  console.log(`[opencode] searched: ${checked.length ? checked.join(', ') : 'none found'} → ${res.length} session(s)`);
   return res;
 }
 
