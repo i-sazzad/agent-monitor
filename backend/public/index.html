@@ -518,7 +518,7 @@ function renderCoderTable() {
     const acctHtml = accts.length
       ? accts.map(a => `<span class="pill pill-muted" title="${esc(a)}" style="font-size:10px">${esc(a.length>20?a.slice(0,18)+'…':a)}</span>`).join(' ')
       : '<span style="color:var(--muted)">—</span>';
-    const ips = (c.ips||[]).filter(ip=>!ip.startsWith('fe80') && !ip.startsWith('::1')).join(', ') || '—';
+    const ips = (c.ips||[]).join(', ') || '—';
     const tr = document.createElement('tr');
     tr.className = 'row';
     tr.innerHTML = `
