@@ -30,7 +30,7 @@
     .btn-primary{background:var(--accent);color:#fff;}
     .btn-ghost{background:var(--surface2);color:var(--muted);border:1px solid var(--border);}
 
-    .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;}
+    .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px;}
     .kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
     .kpi .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:4px;}
     .kpi .val{font-size:22px;font-weight:700;line-height:1;}
@@ -39,6 +39,7 @@
     .kpi.c-green .val{color:var(--green);}
     .kpi.c-purple .val{color:var(--purple);}
     .kpi.c-orange .val{color:var(--orange);}
+    .kpi.c-cyan .val{color:var(--cyan);}
 
     .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;}
     .ch{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
@@ -116,10 +117,11 @@
 
     <!-- KPI CARDS -->
     <div class="kpis">
-      <div class="kpi c-blue"><div class="lbl">Sessions</div><div class="val" id="kSessions">—</div><div class="sub" id="kPromptsSub">conversations</div></div>
+      <div class="kpi c-green"><div class="lbl">Projects</div><div class="val" id="kProjects">—</div></div>
+      <div class="kpi c-blue"><div class="lbl">Sessions</div><div class="val" id="kSessions">—</div></div>
+      <div class="kpi c-cyan"><div class="lbl">Prompts</div><div class="val" id="kPrompts">—</div></div>
       <div class="kpi c-purple"><div class="lbl">Input tokens</div><div class="val" id="kIn">—</div></div>
       <div class="kpi c-orange"><div class="lbl">Output tokens</div><div class="val" id="kOut">—</div></div>
-      <div class="kpi c-green"><div class="lbl">Projects</div><div class="val" id="kProjects">—</div></div>
     </div>
 
     <!-- TOKEN TABLE -->
@@ -226,14 +228,12 @@ function render() {
   const d = _data;
 
   // KPIs
-  const sessions = new Set((d.interactions||[]).map(i=>i.session_id||i.interaction_id)).size;
-  // Use daily data for accurate session count
   const totalSessions = (d.daily||[]).reduce((s,r)=>s+(r.sessions||0),0);
-  const totalPrompts  = (d.interactions||[]).length;
+  const totalPrompts  = (d.daily||[]).reduce((s,r)=>s+(r.prompts||0),0);
   const totalIn  = (d.tokens||[]).reduce((s,r)=>s+(r.tokens_in||0),0);
   const totalOut = (d.tokens||[]).reduce((s,r)=>s+(r.tokens_out||0),0);
-  $('#kSessions').textContent  = totalSessions;
-  $('#kPromptsSub').textContent = totalPrompts + ' prompts';
+  $('#kSessions').textContent = totalSessions;
+  $('#kPrompts').textContent  = totalPrompts;
   $('#kIn').textContent  = fmt(totalIn);
   $('#kOut').textContent = fmt(totalOut);
   $('#kProjects').textContent  = (d.projects||[]).length;
@@ -268,15 +268,12 @@ function render() {
   const dtb = $('#dailyTbody'); dtb.innerHTML = '';
   let dtot = {s:0,pr:0,cl:0,oc:0,ti:0,to:0};
   for (const r of (d.daily||[])) {
-    dtot.s+=r.sessions||0; dtot.cl+=r.claude||0; dtot.oc+=r.opencode||0;
+    dtot.s+=r.sessions||0; dtot.pr+=r.prompts||0; dtot.cl+=r.claude||0; dtot.oc+=r.opencode||0;
     dtot.ti+=r.tokens_in||0; dtot.to+=r.tokens_out||0;
-    // prompts for this day = count from interactions where date matches
-    const dayPrompts = interactions.filter(i => (i.ts||'').slice(0,10)===r.date).length;
-    dtot.pr+=dayPrompts;
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${esc(r.date)}</td>
       <td class="r">${r.sessions}</td>
-      <td class="r" style="color:var(--muted)">${dayPrompts||'—'}</td>
+      <td class="r" style="color:var(--muted)">${r.prompts||'—'}</td>
       <td class="r">${r.claude?pill(r.claude,'pill-blue'):'<span style="color:var(--muted)">0</span>'}</td>
       <td class="r">${r.opencode?pill(r.opencode,'pill-orange'):'<span style="color:var(--muted)">0</span>'}</td>
       <td class="r">${fmt(r.tokens_in)}</td><td class="r">${fmt(r.tokens_out)}</td>`;

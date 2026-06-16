@@ -360,6 +360,7 @@ export function fileChangesByProject(f: Filters = {}): FileChangeSummary[] {
 export interface CoderDailyActivity {
   date: string;
   sessions: number;
+  prompts: number;
   claude: number;
   opencode: number;
   tokens_in: number;
@@ -370,7 +371,8 @@ export function coderDailyActivity(coder: string, f: Filters = {}): CoderDailyAc
   const { sql, params } = where({ ...f, coders: [coder] });
   return db.prepare(`
     SELECT date(COALESCE(ts, received_at)) date,
-           COUNT(*) sessions,
+           COUNT(DISTINCT COALESCE(session_id, interaction_id)) sessions,
+           COUNT(*) prompts,
            SUM(CASE WHEN agent='claude_code' THEN 1 ELSE 0 END) claude,
            SUM(CASE WHEN agent='opencode'    THEN 1 ELSE 0 END) opencode,
            SUM(COALESCE(tokens_in,0))  tokens_in,

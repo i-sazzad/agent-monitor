@@ -45,7 +45,7 @@ Dashboard → `http://<server>:4319` (login with `ADMIN_TOKEN`)
 
 ### 2. Deploy the capture agent
 
-On each coder's machine, copy `monitor/` and create a `.env`:
+On each coder's machine, copy the `monitor/` folder and create a `.env` inside it:
 
 ```
 INGEST_URL=http://192.168.x.x:4319
@@ -82,12 +82,17 @@ OPENCODE_WEEKLY_LIMIT=500
 
 ### Main dashboard (`/`)
 - KPI cards: active coders, projects, sessions, tokens, complexity signal
-- Activity timeline, model distribution, task complexity, agent breakdown
+- Activity timeline, model distribution, task complexity, agent breakdown charts
 - Coder table with sessions, prompts, token spend, IPs — click any row for drilldown
 
 ### Coder detail (`/coder.html?coder=name`)
-- Token spend by model
-- Daily activity table
+
+KPI cards (left → right): **Projects · Sessions · Prompts · Input tokens · Output tokens**
+
+- Sessions = distinct conversation sessions (not prompt count)
+- Prompts = total user turns sent to the agent
+- Token spend table by model (excludes incomplete sessions with no response)
+- Daily activity table with sessions, prompts, Claude/OpenCode split, tokens
 - Projects with file-change breakdown (which agent modified which file)
 - Full prompt history (date-filtered)
 

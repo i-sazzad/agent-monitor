@@ -109,10 +109,17 @@ Each row in `interactions` is one user prompt turn, with: `coder`, `agent`
 (truncated), `task_class` (`simple`/`moderate`/`critical`), token counts,
 git branch, and timestamp.
 
+## Coder detail page — KPI card order
+
+Projects → Sessions → Prompts → Input tokens → Output tokens
+
+- **Sessions** = `COUNT(DISTINCT COALESCE(session_id, interaction_id))` per day (not prompt count)
+- **Prompts** = `COUNT(*)` per day (every user turn)
+- Token table excludes rows where model IS NULL and all token counts are zero
+  (interrupted sessions where Claude never responded)
+
 ## Conventions
 
 - Windows host; Git normalizes LF→CRLF on checkout (the warning is benign).
 - `monitor/agent.js` must remain zero-dependency (no `require()` of npm packages).
 - IP filtering: only `192.168.x.x` addresses stored/displayed.
-- Token table excludes rows where model is NULL and all token counts are zero
-  (interrupted sessions with no Claude response).
