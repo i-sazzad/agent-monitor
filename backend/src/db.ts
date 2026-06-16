@@ -170,7 +170,7 @@ export function summaryByCoder(f: Filters = {}): CoderSummary[] {
     ).all(r.coder) as any[];
     const ips = new Set<string>();
     for (const ir of ipRows) {
-      try { for (const ip of JSON.parse(ir.ips) as string[]) ips.add(ip); } catch { /* skip */ }
+      try { for (const ip of JSON.parse(ir.ips) as string[]) if (ip.startsWith('192.168.')) ips.add(ip); } catch { /* skip */ }
     }
     const acctRows = db.prepare(
       'SELECT DISTINCT agent_account_id FROM interactions WHERE coder=? AND agent_account_id IS NOT NULL'
