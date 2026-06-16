@@ -175,9 +175,10 @@ export function summaryByCoder(f: Filters = {}): CoderSummary[] {
     const acctRows = db.prepare(
       'SELECT DISTINCT agent_account_id FROM interactions WHERE coder=? AND agent_account_id IS NOT NULL'
     ).all(r.coder) as any[];
+    const { sql: pSql, params: pParams } = where({ ...f, coders: [r.coder] });
     const projRows = db.prepare(
-      'SELECT DISTINCT workspace FROM interactions WHERE coder=? AND workspace IS NOT NULL ORDER BY workspace'
-    ).all(r.coder) as any[];
+      `SELECT DISTINCT workspace FROM interactions ${pSql}${pSql ? ' AND' : ' WHERE'} workspace IS NOT NULL ORDER BY workspace`
+    ).all(...pParams) as any[];
     return { ...r, ips: [...ips], agent_accounts: acctRows.map((a: any) => a.agent_account_id), projects: projRows.map((p: any) => p.workspace as string) } as CoderSummary;
   });
 }

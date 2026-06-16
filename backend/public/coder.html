@@ -403,7 +403,14 @@ function showFC(workspace, fcRows) {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 resetDates();
-apiFetch('/api/coder/' + encodeURIComponent(CODER)).then(data => {
+// Pre-fill date filter from URL if passed by main dashboard
+(function() {
+  const sp = new URLSearchParams(location.search);
+  const f = sp.get('from'), t = sp.get('to');
+  if (f) $('#fFrom').value = localDateStr(new Date(f));
+  if (t) $('#fTo').value   = localDateStr(new Date(t));
+})();
+apiFetch('/api/coder/' + encodeURIComponent(CODER) + buildQS()).then(data => {
   _data = data; showDetail(); render();
   $('#lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }).catch(() => showLogin());

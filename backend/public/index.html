@@ -531,9 +531,15 @@ function renderCoderTable() {
       <td class="r">${fmt(c.tokens_in)}</td>
       <td class="r">${fmt(c.tokens_out)}</td>
       <td class="r ${(c.simple_on_opus||0)>0?'warn':''}">${c.simple_on_opus||0}</td>
-      <td style="font-size:11px">${(c.projects||[]).slice(0,3).map(p=>`<span class="pill pill-muted" title="${esc(p)}">${esc(projName(p))}</span>`).join(' ')}${(c.projects||[]).length>3?` <span style="color:var(--muted)">+${c.projects.length-3}</span>`:''}</td>
+      <td class="r">${(c.projects||[]).length || '<span style="color:var(--muted)">0</span>'}</td>
       <td style="color:var(--muted);font-size:11px">${esc(ips)}</td>`;
-    tr.onclick = () => window.open('/coder.html?coder=' + encodeURIComponent(c.coder), '_blank');
+    tr.onclick = () => {
+      const p = new URLSearchParams();
+      p.set('coder', c.coder);
+      if ($('#fFrom').value) p.set('from', new Date($('#fFrom').value+'T00:00:00').toISOString());
+      if ($('#fTo').value)   p.set('to',   new Date($('#fTo').value+'T23:59:59.999').toISOString());
+      window.open('/coder.html?' + p.toString(), '_blank');
+    };
     tb.appendChild(tr);
   }
 }
