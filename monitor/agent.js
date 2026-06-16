@@ -45,18 +45,13 @@ const emptyTok = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 });
 
 // ── Identity ──────────────────────────────────────────────────────────────────
 function localIps() {
-  const out = [];
   try {
     for (const ifaces of Object.values(os.networkInterfaces() || {}))
       for (const ni of (ifaces || []))
-        if (!ni.internal && ni.family === 'IPv4' &&
-            (ni.address.startsWith('192.168.') || ni.address.startsWith('10.') ||
-             ni.address.startsWith('172.16.')  || ni.address.startsWith('172.17.') ||
-             ni.address.startsWith('172.18.')  || ni.address.startsWith('172.19.') ||
-             ni.address.startsWith('172.2')    || ni.address.startsWith('172.3')))
-          out.push(ni.address);
+        if (!ni.internal && ni.family === 'IPv4' && ni.address.startsWith('192.168.'))
+          return [ni.address];
   } catch {}
-  return out;
+  return [];
 }
 
 function claudeAccountId() {
