@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Agent Monitor</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="/chart.min.js"></script>
   <style>
     :root{
       --bg:#0b0d12;--surface:#111520;--surface2:#161b27;--border:#1e2535;
@@ -109,6 +109,20 @@
     .drill-item{padding:10px 0;border-bottom:1px solid var(--border);}
     .drill-item:last-child{border-bottom:none;}
 
+    /* ── usage limit bars ── */
+    .limits-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;}
+    .limit-coder{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;}
+    .limit-coder .lc-name{font-size:12px;font-weight:600;margin-bottom:10px;color:var(--fg);}
+    .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+    .bar-row .bar-lbl{font-size:10px;color:var(--muted);width:120px;flex-shrink:0;}
+    .bar-track{flex:1;height:8px;background:#1a2035;border-radius:999px;overflow:hidden;}
+    .bar-fill{height:100%;border-radius:999px;transition:width .4s ease;}
+    .bar-pct{font-size:10px;width:36px;text-align:right;flex-shrink:0;}
+    .bar-green{background:var(--green);}
+    .bar-orange{background:var(--orange);}
+    .bar-red{background:var(--red);}
+    .limits-note{font-size:11px;color:var(--muted);margin-top:8px;}
+
     .hidden{display:none!important;}
     .spin{animation:spin 1s linear infinite;display:inline-block;}
     @keyframes spin{to{transform:rotate(360deg);}}
@@ -183,7 +197,7 @@
     <!-- KPI CARDS -->
     <div class="kpis">
       <div class="kpi c-blue"><div class="lbl">Active coders</div><div class="val" id="kCoders">—</div><div class="sub">machines reporting</div></div>
-      <div class="kpi c-green"><div class="lbl">Total sessions</div><div class="val" id="kSessions">—</div><div class="sub">all agents</div></div>
+      <div class="kpi c-green"><div class="lbl">Total sessions</div><div class="val" id="kSessions">—</div><div class="sub" id="kSessionsSub">conversations</div></div>
       <div class="kpi c-purple"><div class="lbl">Input tokens</div><div class="val" id="kTokensIn">—</div><div class="sub">across all coders</div></div>
       <div class="kpi c-orange"><div class="lbl">Output tokens</div><div class="val" id="kTokensOut">—</div><div class="sub">across all coders</div></div>
       <div class="kpi c-cyan"><div class="lbl">Simple → Opus</div><div class="val" id="kMisuse">—</div><div class="sub">model mismatch signal</div></div>
@@ -212,12 +226,12 @@
     <div class="card">
       <div class="card-head">
         <h2>Usage by coder</h2>
-        <span class="pill pill-muted">click row → prompt drill-down</span>
+        <span class="pill pill-muted">click row → details & prompts</span>
       </div>
       <div class="tbl-wrap">
         <table>
           <thead><tr>
-            <th>Coder</th><th>Account</th><th class="r">Sessions</th>
+            <th>Coder</th><th>Account</th><th class="r">Sessions</th><th class="r">Prompts</th>
             <th class="r">Claude</th><th class="r">OpenCode</th>
             <th class="r">Input tok.</th><th class="r">Output tok.</th>
             <th class="r">Simple→Opus</th><th>IPs</th>
@@ -228,32 +242,6 @@
       <p style="font-size:11px;color:var(--muted);margin-top:8px">⚠ Simple→Opus: simple-classified prompts run on expensive Opus — descriptive cost signal only.</p>
     </div>
 
-    <!-- TOKEN BY MODEL TABLE -->
-    <div class="card">
-      <div class="card-head"><h2>Token spend by model</h2></div>
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr>
-            <th>Coder</th><th>Model</th><th class="r">Sessions</th>
-            <th class="r">Input</th><th class="r">Output</th>
-            <th class="r">Cache read</th>
-          </tr></thead>
-          <tbody id="tokenTbody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- DRILL-DOWN -->
-    <div class="card hidden" id="drillCard">
-      <div class="card-head" style="margin-bottom:12px">
-        <h2 style="font-size:13px;text-transform:none;letter-spacing:0;color:var(--fg)">
-          Prompts — <span id="drillName" style="color:var(--accent)"></span>
-        </h2>
-        <span class="pill pill-purple">role-gated · access logged</span>
-        <button class="btn btn-ghost" style="margin-left:auto;padding:0 10px;height:26px;font-size:11px" onclick="closeDrill()">✕ close</button>
-      </div>
-      <div id="drillBody"></div>
-    </div>
 
   </div><!-- /app -->
 </main>
@@ -372,12 +360,16 @@ async function initCoderList() {
   });
 }
 
-// Default date range: last 90 days
+// Default date range: today (local date)
+function localDateStr(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
 function setDefaultDates() {
-  const to   = new Date();
-  const from = new Date(Date.now() - 179 * 86400_000); // 6 months default
-  $('#fTo').value   = to.toISOString().slice(0,10);
-  $('#fFrom').value = from.toISOString().slice(0,10);
+  const today = localDateStr(new Date());
+  $('#fTo').value   = today;
+  $('#fFrom').value = today;
 }
 function resetFilters() {
   setDefaultDates();
@@ -389,8 +381,9 @@ function resetFilters() {
 
 function buildQS() {
   const p = new URLSearchParams();
-  if ($('#fFrom').value) p.set('from', $('#fFrom').value);
-  if ($('#fTo').value)   p.set('to',   $('#fTo').value);
+  // Convert local calendar dates → UTC ISO so server comparisons are timezone-correct.
+  if ($('#fFrom').value) p.set('from', new Date($('#fFrom').value + 'T00:00:00').toISOString());
+  if ($('#fTo').value)   p.set('to',   new Date($('#fTo').value   + 'T23:59:59.999').toISOString());
   if (_selCoders.size)   p.set('coders', [..._selCoders].join(','));
   return p.toString() ? '?' + p.toString() : '';
 }
@@ -407,7 +400,7 @@ function renderTags() {
 let _charts = {};
 function mkChart(id, type, data, opts={}) {
   if (_charts[id]) _charts[id].destroy();
-  _charts[id] = new Chart($(id).getContext('2d'), {
+  _charts[id] = new Chart($('#' + id).getContext('2d'), {
     type, data,
     options:{ responsive:true, maintainAspectRatio:true, plugins:{ legend:{ labels:{ boxWidth:10, padding:10 } } }, ...opts }
   });
@@ -419,25 +412,26 @@ async function applyFilters() {
   renderTags();
   const qs = buildQS();
   [_report, _tokens, _activity, _complexity] = await Promise.all([
-    apiFetch('/api/report'    + qs),
-    apiFetch('/api/tokens'    + qs),
-    apiFetch('/api/activity'  + qs),
-    apiFetch('/api/complexity'+ qs),
+    apiFetch('/api/report'     + qs),
+    apiFetch('/api/tokens'     + qs),
+    apiFetch('/api/activity'   + qs),
+    apiFetch('/api/complexity' + qs),
   ]);
   renderKPIs();
-  renderTimeline();
-  renderCharts();
+  try { renderTimeline(); } catch(e) { console.error('timeline', e); }
+  try { renderCharts();   } catch(e) { console.error('charts', e); }
   renderCoderTable();
-  renderTokenTable();
-  closeDrill();
   $('#lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 
 function renderKPIs() {
-  const coders = _report.coders;
-  const total  = (k) => coders.reduce((s,c) => s+(c[k]||0), 0);
+  const coders  = _report.coders;
+  const total   = (k) => coders.reduce((s,c) => s+(c[k]||0), 0);
+  const sessions = total('sessions');
+  const prompts  = total('prompts');
   $('#kCoders').textContent    = coders.length;
-  $('#kSessions').textContent  = total('sessions').toLocaleString();
+  $('#kSessions').textContent  = sessions.toLocaleString();
+  $('#kSessionsSub').textContent = prompts.toLocaleString() + ' prompts total';
   $('#kTokensIn').textContent  = fmt(total('tokens_in'));
   $('#kTokensOut').textContent = fmt(total('tokens_out'));
   $('#kMisuse').textContent    = total('simple_on_opus');
@@ -527,80 +521,18 @@ function renderCoderTable() {
       <td><strong>${esc(c.coder)}</strong></td>
       <td>${acctHtml}</td>
       <td class="r">${c.sessions}</td>
+      <td class="r" style="color:var(--muted)">${c.prompts}</td>
       <td class="r">${c.claude ? pill(c.claude,'pill-blue') : '<span style="color:var(--muted)">0</span>'}</td>
       <td class="r">${c.opencode ? pill(c.opencode,'pill-orange') : '<span style="color:var(--muted)">0</span>'}</td>
       <td class="r">${fmt(c.tokens_in)}</td>
       <td class="r">${fmt(c.tokens_out)}</td>
       <td class="r ${(c.simple_on_opus||0)>0?'warn':''}">${c.simple_on_opus||0}</td>
       <td style="color:var(--muted);font-size:11px">${esc(ips)}</td>`;
-    tr.onclick = () => drilldown(c.coder);
+    tr.onclick = () => window.open('/coder.html?coder=' + encodeURIComponent(c.coder), '_blank');
     tb.appendChild(tr);
   }
 }
 
-function renderTokenTable() {
-  const tb = $('#tokenTbody'); tb.innerHTML = '';
-  let prev=null, tot={ti:0,to:0,tc:0,s:0};
-  const flush = coder => {
-    if (!coder) return;
-    const tr = document.createElement('tr');
-    tr.className = 'total-row';
-    tr.innerHTML = `<td>${esc(coder)} <span style="font-weight:400;color:var(--muted);font-size:11px">total</span></td>
-      <td></td><td class="r">${tot.s}</td>
-      <td class="r">${fmt(tot.ti)}</td><td class="r">${fmt(tot.to)}</td>
-      <td class="r">${fmt(tot.tc)}</td>`;
-    tb.appendChild(tr);
-    tot={ti:0,to:0,tc:0,s:0};
-  };
-  for (const r of _tokens.rows) {
-    if (r.coder !== prev && prev !== null) flush(prev);
-    prev = r.coder;
-    tot.ti+=r.tokens_in||0; tot.to+=r.tokens_out||0;
-    tot.tc+=r.tokens_cache_read||0; tot.s+=r.sessions||0;
-    const sm = shortModel(r.model);
-    const cl = modelClr(r.model);
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td style="color:var(--muted)">${esc(r.coder)}</td>
-      <td><span class="pill" style="background:#0e1525;color:${cl}">${esc(sm)}</span></td>
-      <td class="r">${r.sessions}</td>
-      <td class="r">${fmt(r.tokens_in)}</td><td class="r">${fmt(r.tokens_out)}</td>
-      <td class="r">${fmt(r.tokens_cache_read)}</td>`;
-    tb.appendChild(tr);
-  }
-  flush(prev);
-}
-
-// ── Drill-down ────────────────────────────────────────────────────────────────
-async function drilldown(coder) {
-  const qs = buildQS();
-  const data = await apiFetch('/api/coder/' + encodeURIComponent(coder) + qs);
-  $('#drillCard').classList.remove('hidden');
-  $('#drillName').textContent = coder;
-  const items = data.interactions || [];
-  if (!items.length) { $('#drillBody').innerHTML = '<p style="color:var(--muted)">No prompts in this range.</p>'; }
-  else {
-    $('#drillBody').innerHTML = items.map(i => {
-      const sm    = shortModel(i.model);
-      const cl    = modelClr(i.model);
-      const tc    = i.task_class || 'unknown';
-      const tcCls = { simple:'pill-green', moderate:'pill-blue', critical:'pill-red' }[tc] || 'pill-muted';
-      const acct  = i.agent_account_id ? pill(esc(i.agent_account_id.length>24?i.agent_account_id.slice(0,22)+'…':i.agent_account_id),'pill-muted') : '';
-      return `<div class="drill-item">
-        <div class="drill-meta">
-          <span>${fmtDate(i.ts)}</span>
-          <span class="pill" style="background:#0e1525;color:${cl}">${esc(sm)}</span>
-          ${pill(tc, tcCls)}
-          ${i.git_branch ? `<span>⎇ ${esc(i.git_branch)}</span>` : ''}
-          ${i.tokens_in || i.tokens_out ? `<span>${fmt(i.tokens_in)}↑ ${fmt(i.tokens_out)}↓</span>` : ''}
-          ${acct}
-        </div>
-        <pre>${esc(i.prompt || '(no prompt captured)')}</pre>
-      </div>`;
-    }).join('');
-  }
-  $('#drillCard').scrollIntoView({ behavior:'smooth' });
-}
-function closeDrill() { $('#drillCard').classList.add('hidden'); }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 setDefaultDates();

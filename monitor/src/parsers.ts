@@ -37,57 +37,72 @@ function claudeText(content: unknown): string | null {
   return null;
 }
 
-function parseClaude(file: string): RawSession | null {
+function parseClaude(file: string): RawSession[] {
   let lines: string[];
   try {
     lines = fs.readFileSync(file, 'utf8').split('\n');
   } catch {
-    return null;
+    return [];
   }
-  const r: RawSession = {
-    agent: 'claude_code', model: null, prompt: null, workspace: null,
-    gitBranch: null, sessionId: null, timestamp: null,
-    tokens: emptyTokens(), modelConfidence: 'authoritative',
-  };
-  let saw = false;
+
+  // Parse all non-empty lines upfront.
+  const parsed: any[] = [];
   for (const line of lines) {
     const s = line.trim();
-    if (!s) {
-      continue;
-    }
-    let o: any;
-    try {
-      o = JSON.parse(s);
-    } catch {
-      continue;
-    }
-    saw = true;
-    r.sessionId ??= o.sessionId ?? null;
-    r.workspace ??= o.cwd ?? null;
-    r.gitBranch ??= o.gitBranch ?? null;
-    r.timestamp ??= o.timestamp ?? null;
-    const m = o.message;
-    if (m && typeof m === 'object') {
-      // Skip synthetic/internal model markers.
-      if (m.model && !out_isSynthetic(m.model) && !r.model) {
-        r.model = String(m.model);
-      }
-      if (o.type === 'user' && !r.prompt && o.promptSource !== 'command') {
-        const p = claudeText(m.content);
-        if (p && !p.startsWith('<')) {
-          r.prompt = p;
-        }
-      }
-      const u = m.usage;
-      if (u && typeof u === 'object') {
-        r.tokens.input += u.input_tokens ?? 0;
-        r.tokens.output += u.output_tokens ?? 0;
-        r.tokens.cacheRead += u.cache_read_input_tokens ?? 0;
-        r.tokens.cacheCreate += u.cache_creation_input_tokens ?? 0;
-      }
-    }
+    if (!s) continue;
+    try { parsed.push(JSON.parse(s)); } catch { continue; }
   }
-  return saw ? r : null;
+  if (!parsed.length) return [];
+
+  // Extract session-level metadata from whichever line has it first.
+  const sessionId  = parsed.find((o: any) => o.sessionId)?.sessionId  ?? null;
+  const workspace  = parsed.find((o: any) => o.cwd)?.cwd              ?? null;
+  const gitBranch  = parsed.find((o: any) => o.gitBranch)?.gitBranch  ?? null;
+
+  const results: RawSession[] = [];
+
+  for (let i = 0; i < parsed.length; i++) {
+    const o = parsed[i];
+    // Only real user turns (skip command injections and non-user entries).
+    if (o.type !== 'user' || o.promptSource === 'command') continue;
+    const m = o.message;
+    if (!m || typeof m !== 'object') continue;
+    const p = claudeText(m.content);
+    if (!p || p.startsWith('<')) continue;
+
+    // Collect tokens + model from the assistant turn(s) that follow this user turn.
+    const tokens = emptyTokens();
+    let model: string | null = null;
+    for (let j = i + 1; j < parsed.length; j++) {
+      const next = parsed[j];
+      if (next.type === 'user') break; // next user turn starts
+      if (next.type !== 'assistant') continue;
+      const nm = next.message;
+      if (!nm || typeof nm !== 'object') continue;
+      if (nm.model && !out_isSynthetic(nm.model) && !model) model = String(nm.model);
+      const u = nm.usage;
+      if (u && typeof u === 'object') {
+        tokens.input  += u.input_tokens                  ?? 0;
+        tokens.output += u.output_tokens                 ?? 0;
+        tokens.cacheRead   += u.cache_read_input_tokens   ?? 0;
+        tokens.cacheCreate += u.cache_creation_input_tokens ?? 0;
+      }
+    }
+
+    results.push({
+      agent: 'claude_code',
+      model,
+      prompt: p,
+      workspace,
+      gitBranch,
+      sessionId,
+      timestamp: o.timestamp ?? null,
+      tokens,
+      modelConfidence: 'authoritative',
+    });
+  }
+
+  return results;
 }
 
 function out_isSynthetic(model: string): boolean {
@@ -113,10 +128,7 @@ export function readClaude(): RawSession[] {
     }
     for (const f of files) {
       if (f.endsWith('.jsonl')) {
-        const rec = parseClaude(path.join(dir, f));
-        if (rec) {
-          res.push(rec);
-        }
+        res.push(...parseClaude(path.join(dir, f)));
       }
     }
   }

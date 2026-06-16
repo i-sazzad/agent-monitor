@@ -42,6 +42,7 @@ db.exec(`
 `);
 
 try { db.exec('ALTER TABLE interactions ADD COLUMN agent_account_id TEXT'); } catch { /* exists */ }
+try { db.exec('ALTER TABLE interactions ADD COLUMN git_changes TEXT'); } catch { /* exists */ }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ function where(f: Filters, alias = ''): { sql: string; params: (string | number)
   const parts: string[] = [];
   const params: (string | number)[] = [];
   if (f.from) { parts.push(`${tsCol} >= ?`); params.push(f.from); }
-  if (f.to)   { parts.push(`${tsCol} <= ?`); params.push(f.to + 'T23:59:59.999Z'); }
+  if (f.to)   { parts.push(`${tsCol} <= ?`); params.push(f.to); }
   if (f.coders?.length) {
     parts.push(`${cdrCol} IN (${f.coders.map(() => '?').join(',')})`);
     params.push(...f.coders);
@@ -67,6 +68,8 @@ function where(f: Filters, alias = ''): { sql: string; params: (string | number)
 }
 
 // ── ingest ───────────────────────────────────────────────────────────────────
+
+export interface GitChange { file: string; added: number; removed: number; }
 
 export interface IngestRow {
   interactionId: string;
@@ -84,16 +87,17 @@ export interface IngestRow {
   tokens: { input: number; output: number; cacheRead: number; cacheCreate: number };
   modelConfidence: string;
   agentAccountId?: string | null;
+  gitChanges?: GitChange[] | null;
 }
 
 const insert = db.prepare(`
   INSERT OR IGNORE INTO interactions
   (interaction_id, coder, ips, agent, model, prompt, task_class, task_confidence,
    workspace, git_branch, session_id, ts, received_at,
-   tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model_confidence, agent_account_id)
+   tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model_confidence, agent_account_id, git_changes)
   VALUES (@interaction_id,@coder,@ips,@agent,@model,@prompt,@task_class,@task_confidence,
    @workspace,@git_branch,@session_id,@ts,@received_at,
-   @tokens_in,@tokens_out,@tokens_cache_read,@tokens_cache_create,@model_confidence,@agent_account_id)
+   @tokens_in,@tokens_out,@tokens_cache_read,@tokens_cache_create,@model_confidence,@agent_account_id,@git_changes)
 `);
 
 export function ingestMany(rows: IngestRow[]): number {
@@ -121,6 +125,7 @@ export function ingestMany(rows: IngestRow[]): number {
         tokens_cache_create: r.tokens.cacheCreate,
         model_confidence: r.modelConfidence,
         agent_account_id: r.agentAccountId ?? null,
+        git_changes: r.gitChanges?.length ? JSON.stringify(r.gitChanges) : null,
       });
       n += info.changes;
     }
@@ -134,6 +139,7 @@ export function ingestMany(rows: IngestRow[]): number {
 export interface CoderSummary {
   coder: string;
   sessions: number;
+  prompts: number;
   claude: number;
   opencode: number;
   tokens_in: number;
@@ -147,7 +153,8 @@ export function summaryByCoder(f: Filters = {}): CoderSummary[] {
   const { sql, params } = where(f);
   const rows = db.prepare(`
     SELECT coder,
-           COUNT(*) sessions,
+           COUNT(DISTINCT COALESCE(session_id, interaction_id)) sessions,
+           COUNT(*) prompts,
            SUM(agent='claude_code') claude,
            SUM(agent='opencode') opencode,
            SUM(COALESCE(tokens_in,0)) tokens_in,
@@ -173,6 +180,7 @@ export function summaryByCoder(f: Filters = {}): CoderSummary[] {
 
 export interface TokensByModel {
   coder: string;
+  agent: string;
   model: string;
   sessions: number;
   tokens_in: number;
@@ -185,6 +193,7 @@ export function tokensByModel(f: Filters = {}): TokensByModel[] {
   const { sql, params } = where(f);
   return db.prepare(`
     SELECT coder,
+           COALESCE(agent, 'unknown') agent,
            COALESCE(model, 'unknown') model,
            COUNT(*) sessions,
            SUM(COALESCE(tokens_in,0)) tokens_in,
@@ -192,7 +201,7 @@ export function tokensByModel(f: Filters = {}): TokensByModel[] {
            SUM(COALESCE(tokens_cache_read,0)) tokens_cache_read,
            SUM(COALESCE(tokens_cache_create,0)) tokens_cache_create
     FROM interactions ${sql}
-    GROUP BY coder, model ORDER BY coder, tokens_in DESC
+    GROUP BY coder, agent, model ORDER BY coder, tokens_in DESC
   `).all(...params) as TokensByModel[];
 }
 
@@ -223,6 +232,41 @@ export interface TaskClassBreakdown {
   sessions: number;
 }
 
+/** ISO date string for the most recent Monday (UTC). */
+function mondayISO(): string {
+  const d = new Date();
+  const day = d.getUTCDay(); // 0=Sun
+  const diff = day === 0 ? 6 : day - 1;
+  d.setUTCDate(d.getUTCDate() - diff);
+  return d.toISOString().slice(0, 10);
+}
+
+export interface CoderLimitUsage {
+  coder: string;
+  claude_today:    number;
+  claude_week:     number;
+  opencode_today:  number;
+  opencode_week:   number;
+}
+
+/**
+ * Per-coder session counts for today and this week (Mon–Sun UTC).
+ * Used to show % of account-level daily/weekly limits.
+ */
+export function coderLimitUsage(): CoderLimitUsage[] {
+  const today  = new Date().toISOString().slice(0, 10);
+  const monday = mondayISO();
+  return db.prepare(`
+    SELECT coder,
+      SUM(CASE WHEN date(COALESCE(ts,received_at))  =  ? AND agent='claude_code' THEN 1 ELSE 0 END) claude_today,
+      SUM(CASE WHEN date(COALESCE(ts,received_at)) >= ? AND agent='claude_code' THEN 1 ELSE 0 END) claude_week,
+      SUM(CASE WHEN date(COALESCE(ts,received_at))  =  ? AND agent='opencode'   THEN 1 ELSE 0 END) opencode_today,
+      SUM(CASE WHEN date(COALESCE(ts,received_at)) >= ? AND agent='opencode'    THEN 1 ELSE 0 END) opencode_week
+    FROM interactions
+    GROUP BY coder ORDER BY coder
+  `).all(today, monday, today, monday) as CoderLimitUsage[];
+}
+
 export function taskClassBreakdown(f: Filters = {}): TaskClassBreakdown[] {
   const { sql, params } = where(f);
   return db.prepare(`
@@ -230,6 +274,96 @@ export function taskClassBreakdown(f: Filters = {}): TaskClassBreakdown[] {
     FROM interactions ${sql}
     GROUP BY task_class
   `).all(...params) as TaskClassBreakdown[];
+}
+
+export interface ProjectSummary {
+  workspace: string;
+  sessions: number;
+  claude: number;
+  opencode: number;
+  coders: number;
+  tokens_in: number;
+  tokens_out: number;
+}
+
+export function projectSummary(f: Filters = {}): ProjectSummary[] {
+  const { sql, params } = where(f);
+  return db.prepare(`
+    SELECT COALESCE(workspace,'(unknown)') workspace,
+           COUNT(*) sessions,
+           SUM(CASE WHEN agent='claude_code' THEN 1 ELSE 0 END) claude,
+           SUM(CASE WHEN agent='opencode'    THEN 1 ELSE 0 END) opencode,
+           COUNT(DISTINCT coder) coders,
+           SUM(COALESCE(tokens_in,0))  tokens_in,
+           SUM(COALESCE(tokens_out,0)) tokens_out
+    FROM interactions ${sql}
+    GROUP BY workspace ORDER BY sessions DESC
+  `).all(...params) as ProjectSummary[];
+}
+
+export interface FileChangeSummary {
+  workspace: string;
+  file: string;
+  total_added: number;
+  total_removed: number;
+  occurrences: number;
+}
+
+export function fileChangesByProject(f: Filters = {}): FileChangeSummary[] {
+  const { sql, params } = where(f);
+  const rows = db.prepare(`
+    SELECT workspace, git_changes FROM interactions
+    ${sql ? sql + ' AND git_changes IS NOT NULL' : 'WHERE git_changes IS NOT NULL'}
+  `).all(...params) as { workspace: string; git_changes: string }[];
+
+  const map = new Map<string, Map<string, { added: number; removed: number; count: number }>>();
+  for (const row of rows) {
+    let changes: { file: string; added: number; removed: number }[];
+    try { changes = JSON.parse(row.git_changes); } catch { continue; }
+    const ws = row.workspace || '(unknown)';
+    if (!map.has(ws)) map.set(ws, new Map());
+    const wmap = map.get(ws)!;
+    for (const c of changes) {
+      const key = c.file;
+      const cur = wmap.get(key) ?? { added: 0, removed: 0, count: 0 };
+      cur.added   += c.added;
+      cur.removed += c.removed;
+      cur.count   += 1;
+      wmap.set(key, cur);
+    }
+  }
+
+  const result: FileChangeSummary[] = [];
+  for (const [workspace, files] of map) {
+    for (const [file, stats] of files) {
+      result.push({ workspace, file, total_added: stats.added, total_removed: stats.removed, occurrences: stats.count });
+    }
+  }
+  return result.sort((a, b) => (b.total_added + b.total_removed) - (a.total_added + a.total_removed));
+}
+
+export interface CoderDailyActivity {
+  date: string;
+  sessions: number;
+  claude: number;
+  opencode: number;
+  tokens_in: number;
+  tokens_out: number;
+}
+
+export function coderDailyActivity(coder: string, f: Filters = {}): CoderDailyActivity[] {
+  const { sql, params } = where({ ...f, coders: [coder] });
+  return db.prepare(`
+    SELECT date(COALESCE(ts, received_at)) date,
+           COUNT(*) sessions,
+           SUM(CASE WHEN agent='claude_code' THEN 1 ELSE 0 END) claude,
+           SUM(CASE WHEN agent='opencode'    THEN 1 ELSE 0 END) opencode,
+           SUM(COALESCE(tokens_in,0))  tokens_in,
+           SUM(COALESCE(tokens_out,0)) tokens_out
+    FROM interactions ${sql}
+    GROUP BY date(COALESCE(ts, received_at))
+    ORDER BY date(COALESCE(ts, received_at)) DESC
+  `).all(...params) as CoderDailyActivity[];
 }
 
 /** All distinct coders (for the filter dropdown). */
@@ -242,7 +376,7 @@ export function allCoders(): string[] {
 export function interactionsForCoder(coder: string, limit = 100, f: Filters = {}): any[] {
   const { sql, params } = where({ ...f, coders: [coder] });
   return db.prepare(`
-    SELECT interaction_id, ts, agent, model, agent_account_id, task_class, prompt, git_branch,
+    SELECT interaction_id, session_id, ts, agent, model, agent_account_id, task_class, prompt, git_branch,
            COALESCE(tokens_in,0) tokens_in, COALESCE(tokens_out,0) tokens_out
     FROM interactions ${sql} ORDER BY COALESCE(ts, received_at) DESC LIMIT ?
   `).all(...params, limit);

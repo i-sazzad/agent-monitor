@@ -10,6 +10,10 @@ import {
   tokensByModel,
   activityOverTime,
   taskClassBreakdown,
+  coderLimitUsage,
+  projectSummary,
+  fileChangesByProject,
+  coderDailyActivity,
   allCoders,
   interactionsForCoder,
   logAccess,
@@ -17,6 +21,7 @@ import {
   Filters,
   IngestRow,
 } from './db';
+import { LIMITS } from './config';
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 
@@ -103,16 +108,37 @@ const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Pro
       if (p === '/api/coders') {
         return send(res, 200, { coders: allCoders() });
       }
+      if (p === '/api/limits') {
+        return send(res, 200, { limits: LIMITS, usage: coderLimitUsage() });
+      }
+      if (p === '/api/projects') {
+        return send(res, 200, { rows: projectSummary(f) });
+      }
+      if (p === '/api/file-changes') {
+        return send(res, 200, { rows: fileChangesByProject(f) });
+      }
       const drill = /^\/api\/coder\/(.+)$/.exec(p);
       if (drill) {
         const coder = decodeURIComponent(drill[1]);
         logAccess(s.actor, `drilldown:${coder}`);
-        return send(res, 200, { coder, interactions: interactionsForCoder(coder, 100, f) });
+        const coderFilter = { ...f, coders: [coder] };
+        const allUsage = coderLimitUsage();
+        return send(res, 200, {
+          coder,
+          interactions: interactionsForCoder(coder, 200, f),
+          tokens: tokensByModel(coderFilter),
+          daily: coderDailyActivity(coder, f),
+          projects: projectSummary(coderFilter),
+          fileChanges: fileChangesByProject(coderFilter),
+          limits: { config: LIMITS, usage: allUsage.find(u => u.coder === coder) ?? null },
+        });
       }
     }
 
     // ── static files ───────────────────────────────────────────────────────
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveStatic(res, 'index.html');
+    if (req.method === 'GET' && p === '/coder.html') return serveStatic(res, 'coder.html');
+    if (req.method === 'GET' && p === '/chart.min.js') return serveStatic(res, 'chart.min.js');
 
     return send(res, 404, { error: 'not found' });
   } catch (err) {
