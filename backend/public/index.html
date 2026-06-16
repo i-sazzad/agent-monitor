@@ -44,7 +44,7 @@
     .filter-tag{display:inline-flex;align-items:center;gap:4px;background:#1a2040;color:var(--accent);border:1px solid #2a3560;border-radius:999px;font-size:11px;padding:2px 8px;}
 
     /* ── KPI cards ── */
-    .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px;}
+    .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px;}
     .kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;}
     .kpi::before{content:'';position:absolute;inset:0;opacity:.04;border-radius:10px;}
     .kpi.c-blue::before{background:var(--accent);}
@@ -129,7 +129,7 @@
 
     /* ── responsive ── */
     @media(max-width:900px){
-      .kpis{grid-template-columns:repeat(2,1fr);}
+      .kpis{grid-template-columns:repeat(3,1fr);}
       .chart-grid-3,.chart-grid-2{grid-template-columns:1fr;}
     }
   </style>
@@ -197,6 +197,7 @@
     <!-- KPI CARDS -->
     <div class="kpis">
       <div class="kpi c-blue"><div class="lbl">Active coders</div><div class="val" id="kCoders">—</div><div class="sub">machines reporting</div></div>
+      <div class="kpi c-green" style="border-color:#34d39940"><div class="lbl">Projects</div><div class="val" id="kProjects" style="color:#2dd4bf">—</div><div class="sub">distinct workspaces</div></div>
       <div class="kpi c-green"><div class="lbl">Total sessions</div><div class="val" id="kSessions">—</div><div class="sub" id="kSessionsSub">conversations</div></div>
       <div class="kpi c-purple"><div class="lbl">Input tokens</div><div class="val" id="kTokensIn">—</div><div class="sub">across all coders</div></div>
       <div class="kpi c-orange"><div class="lbl">Output tokens</div><div class="val" id="kTokensOut">—</div><div class="sub">across all coders</div></div>
@@ -430,7 +431,9 @@ function renderKPIs() {
   const total   = (k) => coders.reduce((s,c) => s+(c[k]||0), 0);
   const sessions = total('sessions');
   const prompts  = total('prompts');
+  const distinctProjects = new Set(coders.flatMap(c => c.projects || [])).size;
   $('#kCoders').textContent    = coders.length;
+  $('#kProjects').textContent  = distinctProjects;
   $('#kSessions').textContent  = sessions.toLocaleString();
   $('#kSessionsSub').textContent = prompts.toLocaleString() + ' prompts total';
   $('#kTokensIn').textContent  = fmt(total('tokens_in'));
