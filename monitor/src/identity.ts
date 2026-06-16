@@ -46,6 +46,16 @@ export function claudeAccountId(): string | null {
 }
 
 /**
+ * Human-readable Claude account label.
+ * Set CLAUDE_ACCOUNT_EMAIL env var on each machine to show the actual email
+ * (e.g. company@example.com) instead of the raw org UUID.
+ */
+export function claudeAccountLabel(): string | null {
+  if (process.env.CLAUDE_ACCOUNT_EMAIL) return process.env.CLAUDE_ACCOUNT_EMAIL;
+  return claudeAccountId();
+}
+
+/**
  * Read the OpenCode account identifier. OpenCode stores config at
  * ~/.config/opencode/config.json (XDG) or ~/.opencode/config.json.
  * Returns the account email/user field if present.

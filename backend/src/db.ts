@@ -3,14 +3,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { RETENTION_DAYS } from './config';
 
-/**
- * SQLite store for interactions + an access log (§7: access to monitoring data is
- * itself logged). Local file under backend/data/. Stands in for the production DB.
- */
 const DATA_DIR = path.join(__dirname, '..', 'data');
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'monitor.db'));
 db.pragma('journal_mode = WAL');
@@ -22,35 +16,56 @@ db.exec(`
     ips TEXT,
     agent TEXT,
     model TEXT,
-    prompt TEXT,                 -- already redacted by the client
+    prompt TEXT,
     task_class TEXT,
     task_confidence REAL,
     workspace TEXT,
     git_branch TEXT,
     session_id TEXT,
-    ts TEXT,                     -- original event timestamp
-    received_at TEXT NOT NULL,   -- when the backend stored it (retention basis)
+    ts TEXT,
+    received_at TEXT NOT NULL,
     tokens_in INTEGER, tokens_out INTEGER,
     tokens_cache_read INTEGER, tokens_cache_create INTEGER,
     model_confidence TEXT,
-    agent_account_id TEXT  -- org UUID (Claude) or email (OpenCode) of the logged-in account
+    agent_account_id TEXT
   );
-  CREATE INDEX IF NOT EXISTS idx_coder ON interactions(coder);
+  CREATE INDEX IF NOT EXISTS idx_coder      ON interactions(coder);
+  CREATE INDEX IF NOT EXISTS idx_received   ON interactions(received_at);
+  CREATE INDEX IF NOT EXISTS idx_ts         ON interactions(ts);
   CREATE TABLE IF NOT EXISTS access_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
-    actor TEXT,                  -- which token/role accessed
-    action TEXT,                 -- e.g. report, drilldown:<coder>
+    actor TEXT,
+    action TEXT,
     detail TEXT
   );
 `);
 
-// Migrate existing DBs — safe no-op if column already present.
-try {
-  db.exec('ALTER TABLE interactions ADD COLUMN agent_account_id TEXT');
-} catch {
-  /* column already exists */
+try { db.exec('ALTER TABLE interactions ADD COLUMN agent_account_id TEXT'); } catch { /* exists */ }
+
+// ── helpers ─────────────────────────────────────────────────────────────────
+
+export interface Filters {
+  from?:   string;   // ISO date string (inclusive)
+  to?:     string;   // ISO date string (inclusive, treated as end-of-day)
+  coders?: string[]; // empty = all
 }
+
+function where(f: Filters, alias = ''): { sql: string; params: (string | number)[] } {
+  const col = alias ? `${alias}.received_at` : 'received_at';
+  const cdrCol = alias ? `${alias}.coder` : 'coder';
+  const parts: string[] = [];
+  const params: (string | number)[] = [];
+  if (f.from) { parts.push(`${col} >= ?`); params.push(f.from); }
+  if (f.to)   { parts.push(`${col} <= ?`); params.push(f.to + 'T23:59:59.999Z'); }
+  if (f.coders?.length) {
+    parts.push(`${cdrCol} IN (${f.coders.map(() => '?').join(',')})`);
+    params.push(...f.coders);
+  }
+  return { sql: parts.length ? 'WHERE ' + parts.join(' AND ') : '', params };
+}
+
+// ── ingest ───────────────────────────────────────────────────────────────────
 
 export interface IngestRow {
   interactionId: string;
@@ -113,6 +128,8 @@ export function ingestMany(rows: IngestRow[]): number {
   return tx(rows);
 }
 
+// ── queries ───────────────────────────────────────────────────────────────────
+
 export interface CoderSummary {
   coder: string;
   sessions: number;
@@ -122,7 +139,35 @@ export interface CoderSummary {
   tokens_out: number;
   simple_on_opus: number;
   ips: string[];
-  agent_accounts: string[]; // distinct account IDs seen for this coder
+  agent_accounts: string[];
+}
+
+export function summaryByCoder(f: Filters = {}): CoderSummary[] {
+  const { sql, params } = where(f);
+  const rows = db.prepare(`
+    SELECT coder,
+           COUNT(*) sessions,
+           SUM(agent='claude_code') claude,
+           SUM(agent='opencode') opencode,
+           SUM(COALESCE(tokens_in,0)) tokens_in,
+           SUM(COALESCE(tokens_out,0)) tokens_out,
+           SUM(task_class='simple' AND model LIKE 'claude-opus%') simple_on_opus
+    FROM interactions ${sql} GROUP BY coder ORDER BY coder
+  `).all(...params) as any[];
+
+  return rows.map((r) => {
+    const ipRows = db.prepare(
+      'SELECT DISTINCT ips FROM interactions WHERE coder=?'
+    ).all(r.coder) as any[];
+    const ips = new Set<string>();
+    for (const ir of ipRows) {
+      try { for (const ip of JSON.parse(ir.ips) as string[]) ips.add(ip); } catch { /* skip */ }
+    }
+    const acctRows = db.prepare(
+      'SELECT DISTINCT agent_account_id FROM interactions WHERE coder=? AND agent_account_id IS NOT NULL'
+    ).all(r.coder) as any[];
+    return { ...r, ips: [...ips], agent_accounts: acctRows.map((a: any) => a.agent_account_id) } as CoderSummary;
+  });
 }
 
 export interface TokensByModel {
@@ -135,81 +180,79 @@ export interface TokensByModel {
   tokens_cache_create: number;
 }
 
-export function summaryByCoder(): CoderSummary[] {
-  const rows = db
-    .prepare(
-      `SELECT coder,
-              COUNT(*) sessions,
-              SUM(agent='claude_code') claude,
-              SUM(agent='opencode') opencode,
-              SUM(tokens_in) tokens_in,
-              SUM(tokens_out) tokens_out,
-              SUM(task_class='simple' AND model LIKE 'claude-opus%') simple_on_opus
-       FROM interactions GROUP BY coder ORDER BY coder`
-    )
-    .all() as any[];
-  return rows.map((r) => {
-    const ipRows = db
-      .prepare('SELECT DISTINCT ips FROM interactions WHERE coder=?')
-      .all(r.coder) as any[];
-    const ips = new Set<string>();
-    for (const ir of ipRows) {
-      try {
-        for (const ip of JSON.parse(ir.ips) as string[]) {
-          ips.add(ip);
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    const acctRows = db
-      .prepare(
-        'SELECT DISTINCT agent_account_id FROM interactions WHERE coder=? AND agent_account_id IS NOT NULL'
-      )
-      .all(r.coder) as any[];
-    const agent_accounts = acctRows.map((a: any) => a.agent_account_id as string);
-    return { ...r, ips: [...ips], agent_accounts } as CoderSummary;
-  });
+export function tokensByModel(f: Filters = {}): TokensByModel[] {
+  const { sql, params } = where(f);
+  return db.prepare(`
+    SELECT coder,
+           COALESCE(model, 'unknown') model,
+           COUNT(*) sessions,
+           SUM(COALESCE(tokens_in,0)) tokens_in,
+           SUM(COALESCE(tokens_out,0)) tokens_out,
+           SUM(COALESCE(tokens_cache_read,0)) tokens_cache_read,
+           SUM(COALESCE(tokens_cache_create,0)) tokens_cache_create
+    FROM interactions ${sql}
+    GROUP BY coder, model ORDER BY coder, tokens_in DESC
+  `).all(...params) as TokensByModel[];
 }
 
-/** Per-coder per-model token breakdown — for the "who's spending what" view. */
-export function tokensByModel(): TokensByModel[] {
-  return db
-    .prepare(
-      `SELECT coder,
-              COALESCE(model, 'unknown') model,
-              COUNT(*) sessions,
-              SUM(tokens_in) tokens_in,
-              SUM(tokens_out) tokens_out,
-              SUM(tokens_cache_read) tokens_cache_read,
-              SUM(tokens_cache_create) tokens_cache_create
-       FROM interactions
-       GROUP BY coder, model
-       ORDER BY coder, tokens_in DESC`
-    )
-    .all() as TokensByModel[];
+export interface DailyActivity {
+  date: string;
+  sessions: number;
+  active_coders: number;
+  tokens_in: number;
+  tokens_out: number;
+}
+
+export function activityOverTime(f: Filters = {}): DailyActivity[] {
+  const { sql, params } = where(f);
+  return db.prepare(`
+    SELECT date(received_at) date,
+           COUNT(*) sessions,
+           COUNT(DISTINCT coder) active_coders,
+           SUM(COALESCE(tokens_in,0)) tokens_in,
+           SUM(COALESCE(tokens_out,0)) tokens_out
+    FROM interactions ${sql}
+    GROUP BY date(received_at)
+    ORDER BY date(received_at)
+  `).all(...params) as DailyActivity[];
+}
+
+export interface TaskClassBreakdown {
+  task_class: string;
+  sessions: number;
+}
+
+export function taskClassBreakdown(f: Filters = {}): TaskClassBreakdown[] {
+  const { sql, params } = where(f);
+  return db.prepare(`
+    SELECT COALESCE(task_class,'unknown') task_class, COUNT(*) sessions
+    FROM interactions ${sql}
+    GROUP BY task_class
+  `).all(...params) as TaskClassBreakdown[];
+}
+
+/** All distinct coders (for the filter dropdown). */
+export function allCoders(): string[] {
+  return (db.prepare('SELECT DISTINCT coder FROM interactions ORDER BY coder').all() as any[])
+    .map((r) => r.coder as string);
 }
 
 /** Per-coder prompt drill-down (§7 role-gated; caller must be admin). */
-export function interactionsForCoder(coder: string, limit = 100): any[] {
-  return db
-    .prepare(
-      `SELECT interaction_id, ts, agent, model, agent_account_id, task_class, prompt, git_branch
-       FROM interactions WHERE coder=? ORDER BY ts DESC LIMIT ?`
-    )
-    .all(coder, limit);
+export function interactionsForCoder(coder: string, limit = 100, f: Filters = {}): any[] {
+  const { sql, params } = where({ ...f, coders: [coder] });
+  return db.prepare(`
+    SELECT interaction_id, ts, agent, model, agent_account_id, task_class, prompt, git_branch,
+           COALESCE(tokens_in,0) tokens_in, COALESCE(tokens_out,0) tokens_out
+    FROM interactions ${sql} ORDER BY COALESCE(ts, received_at) DESC LIMIT ?
+  `).all(...params, limit);
 }
 
 export function logAccess(actor: string, action: string, detail = ''): void {
   db.prepare('INSERT INTO access_log (at, actor, action, detail) VALUES (?,?,?,?)').run(
-    new Date().toISOString(),
-    actor,
-    action,
-    detail
+    new Date().toISOString(), actor, action, detail
   );
 }
 
-/** Delete rows older than the retention window (§7). Returns rows removed. */
 export function pruneRetention(): number {
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 86400_000).toISOString();
   return db.prepare('DELETE FROM interactions WHERE received_at < ?').run(cutoff).changes;

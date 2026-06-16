@@ -1,411 +1,623 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Agent Monitor — usage dashboard</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Agent Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
-    :root {
-      --bg:#0d1017; --card:#13161e; --card2:#181c26; --line:#232837;
-      --fg:#e4e8f0; --muted:#7a8499; --accent:#5b9cf6; --accent2:#7c6af7;
-      --green:#3ecf8e; --orange:#f0a050; --red:#f06070; --purple:#b06ef7;
+    :root{
+      --bg:#0b0d12;--surface:#111520;--surface2:#161b27;--border:#1e2535;
+      --fg:#dde3f0;--muted:#5a6380;--accent:#4f8ef7;--accent2:#7b5ef7;
+      --green:#34d399;--orange:#fb923c;--red:#f87171;--yellow:#fbbf24;
+      --purple:#a78bfa;--cyan:#22d3ee;
     }
-    * { box-sizing:border-box; margin:0; padding:0; }
-    body { font:13px/1.6 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
-    header { padding:14px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; }
-    header h1 { font-size:15px; font-weight:700; letter-spacing:-.01em; }
-    .banner { background:#2a1e0a; color:#d4a96a; padding:7px 24px; font-size:11.5px; border-bottom:1px solid var(--line); }
-    main { padding:20px 24px; max-width:1300px; margin:0 auto; }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font:13px/1.5 "Inter",system-ui,sans-serif;background:var(--bg);color:var(--fg);min-height:100vh;}
 
-    /* KPI cards */
-    .kpi-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
-    .kpi { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
-    .kpi .label { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:6px; }
-    .kpi .value { font-size:26px; font-weight:700; line-height:1; }
-    .kpi .sub { font-size:11px; color:var(--muted); margin-top:5px; }
-    .kpi.accent .value { color:var(--accent); }
-    .kpi.green .value  { color:var(--green); }
-    .kpi.orange .value { color:var(--orange); }
-    .kpi.purple .value { color:var(--purple); }
+    /* ── layout ── */
+    header{display:flex;align-items:center;gap:10px;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:100;}
+    header h1{font-size:14px;font-weight:700;letter-spacing:-.02em;white-space:nowrap;}
+    header .tagline{font-size:11px;color:var(--muted);}
+    .hright{margin-left:auto;display:flex;align-items:center;gap:8px;}
+    .banner{background:#1a1206;color:#c8972a;font-size:11px;padding:6px 20px;border-bottom:1px solid var(--border);}
+    main{padding:16px 20px;max-width:1400px;margin:0 auto;}
 
-    /* Chart grid */
-    .chart-row { display:grid; grid-template-columns:2fr 1fr 1fr; gap:14px; margin-bottom:20px; }
-    .chart-row-2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:20px; }
-    .chart-card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
-    .chart-card h3 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:12px; }
-    .chart-card canvas { max-height:220px; }
+    /* ── filter bar ── */
+    .filters{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:16px;}
+    .fg{display:flex;flex-direction:column;gap:4px;}
+    .fg label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}
+    .filters input[type=date],.filters select{height:32px;padding:0 8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--fg);font:13px/1 inherit;outline:none;}
+    .filters input[type=date]:focus,.filters select:focus{border-color:var(--accent);}
+    .coder-dd{position:relative;}
+    .coder-btn{height:32px;padding:0 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--fg);cursor:pointer;font:13px/1 inherit;white-space:nowrap;min-width:130px;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:6px;}
+    .coder-btn:after{content:"▾";font-size:10px;color:var(--muted);}
+    .coder-panel{display:none;position:absolute;top:36px;left:0;z-index:200;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px;min-width:170px;max-height:220px;overflow-y:auto;box-shadow:0 8px 24px #0007;}
+    .coder-panel.open{display:block;}
+    .coder-panel label{display:flex;align-items:center;gap:7px;padding:5px 6px;border-radius:5px;cursor:pointer;font-size:12px;}
+    .coder-panel label:hover{background:var(--border);}
+    .sep{width:1px;height:32px;background:var(--border);}
+    .btn{height:32px;padding:0 14px;border-radius:6px;border:none;cursor:pointer;font:600 12px/1 inherit;}
+    .btn-primary{background:var(--accent);color:#fff;}
+    .btn-ghost{background:var(--surface2);color:var(--muted);border:1px solid var(--border);}
+    .btn-danger{background:#1e0f0f;color:var(--red);border:1px solid #3a1515;}
+    .filter-tag{display:inline-flex;align-items:center;gap:4px;background:#1a2040;color:var(--accent);border:1px solid #2a3560;border-radius:999px;font-size:11px;padding:2px 8px;}
 
-    /* Tables */
-    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 20px; margin-bottom:16px; }
-    .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:12px; font-weight:600; }
-    table { width:100%; border-collapse:collapse; }
-    th,td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); font-size:12.5px; }
-    th { color:var(--muted); font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
-    tr.clickable:hover { background:var(--card2); cursor:pointer; }
-    .right { text-align:right; }
+    /* ── KPI cards ── */
+    .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px;}
+    .kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;}
+    .kpi::before{content:'';position:absolute;inset:0;opacity:.04;border-radius:10px;}
+    .kpi.c-blue::before{background:var(--accent);}
+    .kpi.c-green::before{background:var(--green);}
+    .kpi.c-orange::before{background:var(--orange);}
+    .kpi.c-purple::before{background:var(--purple);}
+    .kpi.c-cyan::before{background:var(--cyan);}
+    .kpi .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:6px;}
+    .kpi .val{font-size:24px;font-weight:700;line-height:1;}
+    .kpi.c-blue .val{color:var(--accent);}
+    .kpi.c-green .val{color:var(--green);}
+    .kpi.c-orange .val{color:var(--orange);}
+    .kpi.c-purple .val{color:var(--purple);}
+    .kpi.c-cyan .val{color:var(--cyan);}
+    .kpi .sub{font-size:10px;color:var(--muted);margin-top:4px;}
 
-    /* Pills & badges */
-    .pill { background:#1e2438; color:var(--accent); padding:1px 7px; border-radius:999px; font-size:11px; display:inline-block; }
-    .pill.green { background:#0d2418; color:var(--green); }
-    .pill.orange { background:#251a08; color:var(--orange); }
-    .pill.red { background:#250c10; color:var(--red); }
-    .muted { color:var(--muted); }
-    .warn { color:var(--orange); font-weight:600; }
+    /* ── chart grid ── */
+    .chart-full{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;}
+    .chart-grid-3{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:12px;}
+    .chart-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;}
+    .chart-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;}
+    .ch{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
+    .chart-box canvas,.chart-full canvas{max-height:200px;}
+    .chart-full canvas{max-height:180px;}
 
-    /* Auth */
-    input,button { font:inherit; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:#0f111a; color:var(--fg); }
-    button { background:var(--accent); color:#060810; border:none; cursor:pointer; font-weight:700; }
-    #loginWrap { max-width:380px; margin:80px auto; }
-    .hidden { display:none; }
+    /* ── tables ── */
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;}
+    .card-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+    .card-head h2{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600;}
+    .tbl-wrap{overflow-x:auto;}
+    table{width:100%;border-collapse:collapse;}
+    th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px;white-space:nowrap;}
+    th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;font-weight:500;}
+    tr.row:hover{background:var(--surface2);cursor:pointer;}
+    tr.total-row{background:#0f1320;font-weight:600;}
+    .r{text-align:right;}
 
-    /* Drill-down */
-    pre { white-space:pre-wrap; word-break:break-word; background:#090c12; padding:10px 12px; border-radius:8px; border:1px solid var(--line); font-size:12px; margin-top:6px; }
-    .drill-row { margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--line); }
-    .drill-row:last-child { border-bottom:none; }
-    .drill-meta { font-size:11px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    /* ── pills / badges ── */
+    .pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;}
+    .pill-blue{background:#0e1d3a;color:var(--accent);}
+    .pill-green{background:#0a2018;color:var(--green);}
+    .pill-orange{background:#201208;color:var(--orange);}
+    .pill-red{background:#200a0a;color:var(--red);}
+    .pill-purple{background:#160d2a;color:var(--purple);}
+    .pill-muted{background:#151a25;color:var(--muted);}
+    .warn{color:var(--orange);font-weight:700;}
 
-    /* Scrollable table wrappers */
-    .tbl-wrap { overflow-x:auto; }
+    /* ── auth ── */
+    #loginWrap{max-width:400px;margin:80px auto;}
+    .login-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px 24px;}
+    .login-card h2{font-size:16px;font-weight:700;margin-bottom:6px;}
+    .login-card p{font-size:12px;color:var(--muted);margin-bottom:18px;}
+    .login-row{display:flex;gap:8px;}
+    .login-row input{flex:1;height:36px;padding:0 10px;background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--fg);font:13px inherit;outline:none;}
+    .login-row input:focus{border-color:var(--accent);}
+    .login-row .btn-primary{height:36px;padding:0 18px;}
+    .err{color:var(--red);font-size:12px;min-height:18px;margin-top:8px;}
+
+    /* ── drill-down ── */
+    .drill-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:var(--muted);margin-bottom:6px;}
+    pre{white-space:pre-wrap;word-break:break-word;background:#070910;border:1px solid var(--border);border-radius:7px;padding:10px 12px;font-size:12px;font-family:ui-monospace,monospace;margin-top:4px;}
+    .drill-item{padding:10px 0;border-bottom:1px solid var(--border);}
+    .drill-item:last-child{border-bottom:none;}
+
+    .hidden{display:none!important;}
+    .spin{animation:spin 1s linear infinite;display:inline-block;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+
+    /* ── responsive ── */
+    @media(max-width:900px){
+      .kpis{grid-template-columns:repeat(2,1fr);}
+      .chart-grid-3,.chart-grid-2{grid-template-columns:1fr;}
+    }
   </style>
 </head>
 <body>
+
 <header>
-  <span style="font-size:20px">🔭</span>
+  <span style="font-size:18px">🔭</span>
   <h1>Agent Monitor</h1>
-  <span class="muted" style="font-size:12px">usage dashboard · monitoring only · no flags or scores</span>
-  <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
-    <span id="lastRefresh" class="muted" style="font-size:11px"></span>
-    <button id="refreshBtn" class="hidden" style="padding:5px 12px;font-size:12px;background:var(--card2);color:var(--fg);border:1px solid var(--line)">↺ Refresh</button>
-    <button id="logout" class="hidden" style="padding:5px 12px;font-size:12px;background:#1e1216;color:#c0607a;border:1px solid #3a1820">Log out</button>
-  </span>
+  <span class="tagline">monitoring only · no flags · no scores</span>
+  <div class="hright">
+    <span id="lastRefresh" style="font-size:11px;color:var(--muted)"></span>
+    <button id="refreshBtn" class="btn btn-ghost hidden" onclick="applyFilters()">↺ Refresh</button>
+    <button id="logoutBtn" class="btn btn-danger hidden" onclick="doLogout()">Log out</button>
+  </div>
 </header>
-<div class="banner">Monitoring active — prompts are redacted before storage, access is logged. For aggregate usage/cost review only; never used to flag or penalise coders.</div>
+
+<div class="banner">⚠ Monitoring active — prompts are redacted before storage, all drill-down access is logged. For aggregate usage/cost review only; never used to flag or penalise.</div>
 
 <main>
+
   <!-- LOGIN -->
-  <div id="loginWrap" class="card">
-    <h2 style="font-size:15px;text-transform:none;letter-spacing:0;color:var(--fg);margin-bottom:12px">Sign in</h2>
-    <p class="muted" style="font-size:12px;margin-bottom:14px">Admin token (swap for company SSO in production).</p>
-    <div style="display:flex;gap:8px">
-      <input id="token" type="password" placeholder="Admin token" style="flex:1" />
-      <button id="loginBtn">Sign in</button>
+  <div id="loginWrap">
+    <div class="login-card">
+      <h2>Sign in</h2>
+      <p>Admin token — replace with company SSO in production.</p>
+      <div class="login-row">
+        <input id="tokenInput" type="password" placeholder="Admin token" onkeydown="if(event.key==='Enter')doLogin()"/>
+        <button class="btn btn-primary" onclick="doLogin()">Sign in</button>
+      </div>
+      <div class="err" id="loginErr"></div>
     </div>
-    <p id="loginErr" style="color:var(--red);font-size:12px;margin-top:8px;min-height:16px"></p>
   </div>
 
   <!-- APP -->
   <div id="app" class="hidden">
 
+    <!-- FILTER BAR -->
+    <div class="filters" id="filterBar">
+      <div class="fg">
+        <label>From</label>
+        <input type="date" id="fFrom"/>
+      </div>
+      <div class="fg">
+        <label>To</label>
+        <input type="date" id="fTo"/>
+      </div>
+      <div class="sep"></div>
+      <div class="fg">
+        <label>Coders</label>
+        <div class="coder-dd" id="coderDd">
+          <button class="coder-btn" onclick="toggleCoderPanel(event)" id="coderBtnLbl">All coders</button>
+          <div class="coder-panel" id="coderPanel">
+            <label><input type="checkbox" id="ckAll" checked onchange="toggleAllCoders(this)"/> <strong>All coders</strong></label>
+            <div id="coderChecks"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sep"></div>
+      <button class="btn btn-primary" onclick="applyFilters()">Apply filters</button>
+      <button class="btn btn-ghost" onclick="resetFilters()">Reset</button>
+      <div id="activeTags" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
+    </div>
+
     <!-- KPI CARDS -->
-    <div class="kpi-row" id="kpiRow">
-      <div class="kpi accent"><div class="label">Active coders</div><div class="value" id="kpiCoders">—</div><div class="sub">machines reporting</div></div>
-      <div class="kpi green"><div class="label">Total sessions</div><div class="value" id="kpiSessions">—</div><div class="sub">all agents combined</div></div>
-      <div class="kpi orange"><div class="label">Est. total cost</div><div class="value" id="kpiCost">—</div><div class="sub">placeholder rates</div></div>
-      <div class="kpi purple"><div class="label">Tokens consumed</div><div class="value" id="kpiTokens">—</div><div class="sub">input + output (M)</div></div>
+    <div class="kpis">
+      <div class="kpi c-blue"><div class="lbl">Active coders</div><div class="val" id="kCoders">—</div><div class="sub">machines reporting</div></div>
+      <div class="kpi c-green"><div class="lbl">Total sessions</div><div class="val" id="kSessions">—</div><div class="sub">all agents</div></div>
+      <div class="kpi c-orange"><div class="lbl">Est. total cost</div><div class="val" id="kCost">—</div><div class="sub">placeholder rates</div></div>
+      <div class="kpi c-purple"><div class="lbl">Total tokens</div><div class="val" id="kTokens">—</div><div class="sub">input + output</div></div>
+      <div class="kpi c-cyan"><div class="lbl">Simple → Opus</div><div class="val" id="kMisuse">—</div><div class="sub">cost signal only</div></div>
+    </div>
+
+    <!-- ACTIVITY TIMELINE (full width) -->
+    <div class="chart-full">
+      <div class="ch">📈 Activity over time — daily sessions &amp; tokens</div>
+      <canvas id="cTimeline"></canvas>
     </div>
 
     <!-- CHARTS ROW 1 -->
-    <div class="chart-row">
-      <div class="chart-card">
-        <h3>Token spend by coder</h3>
-        <canvas id="chartCoderTokens"></canvas>
-      </div>
-      <div class="chart-card">
-        <h3>Model distribution</h3>
-        <canvas id="chartModels"></canvas>
-      </div>
-      <div class="chart-card">
-        <h3>Task complexity</h3>
-        <canvas id="chartComplexity"></canvas>
-      </div>
+    <div class="chart-grid-3">
+      <div class="chart-box"><div class="ch">📊 Token spend by coder</div><canvas id="cCoderTokens"></canvas></div>
+      <div class="chart-box"><div class="ch">🤖 Model distribution</div><canvas id="cModels"></canvas></div>
+      <div class="chart-box"><div class="ch">🧩 Task complexity</div><canvas id="cComplexity"></canvas></div>
     </div>
 
     <!-- CHARTS ROW 2 -->
-    <div class="chart-row-2">
-      <div class="chart-card">
-        <h3>Est. cost by coder (USD)</h3>
-        <canvas id="chartCoderCost"></canvas>
-      </div>
-      <div class="chart-card">
-        <h3>Claude vs OpenCode sessions</h3>
-        <canvas id="chartAgents"></canvas>
-      </div>
+    <div class="chart-grid-2">
+      <div class="chart-box"><div class="ch">💰 Est. cost by coder (USD)</div><canvas id="cCoderCost"></canvas></div>
+      <div class="chart-box"><div class="ch">⚡ Claude vs OpenCode sessions</div><canvas id="cAgents"></canvas></div>
     </div>
 
     <!-- CODER TABLE -->
     <div class="card">
-      <h2>Usage by coder <span class="pill" style="text-transform:none;letter-spacing:0">click a row for prompt drill-down</span></h2>
+      <div class="card-head">
+        <h2>Usage by coder</h2>
+        <span class="pill pill-muted">click row → prompt drill-down</span>
+      </div>
       <div class="tbl-wrap">
-        <table id="coderTable">
+        <table>
           <thead><tr>
-            <th>Coder</th><th class="right">Sessions</th><th class="right">Claude</th>
-            <th class="right">OpenCode</th><th class="right">Input tokens</th>
-            <th class="right">Output tokens</th><th class="right">Est. cost</th>
-            <th class="right">Simple→Opus ⚠</th><th>Account IDs</th><th>IPs</th>
+            <th>Coder</th><th>Account</th><th class="r">Sessions</th>
+            <th class="r">Claude</th><th class="r">OpenCode</th>
+            <th class="r">Input tok.</th><th class="r">Output tok.</th>
+            <th class="r">Est. cost</th><th class="r">Simple→Opus</th><th>IPs</th>
           </tr></thead>
-          <tbody></tbody>
+          <tbody id="coderTbody"></tbody>
         </table>
       </div>
-      <p class="muted" style="font-size:11px;margin-top:8px">⚠ Simple→Opus = simple-classified tasks run on the expensive Opus model. Cost signal only, descriptive.</p>
+      <p style="font-size:11px;color:var(--muted);margin-top:8px">⚠ Simple→Opus: simple-classified prompts run on expensive Opus — descriptive cost signal only.</p>
     </div>
 
     <!-- TOKEN BY MODEL TABLE -->
     <div class="card">
-      <h2>Token spend by model</h2>
+      <div class="card-head"><h2>Token spend by model</h2></div>
       <div class="tbl-wrap">
-        <table id="tokenTable">
+        <table>
           <thead><tr>
-            <th>Coder</th><th>Model</th><th class="right">Sessions</th>
-            <th class="right">Input tokens</th><th class="right">Output tokens</th>
-            <th class="right">Cache read</th><th class="right">Est. cost</th>
+            <th>Coder</th><th>Model</th><th class="r">Sessions</th>
+            <th class="r">Input</th><th class="r">Output</th>
+            <th class="r">Cache read</th><th class="r">Est. cost</th>
           </tr></thead>
-          <tbody></tbody>
+          <tbody id="tokenTbody"></tbody>
         </table>
       </div>
-      <p class="muted" style="font-size:11px;margin-top:8px">Costs estimated with placeholder per-1M rates. Update RATES in this file with real billing rates.</p>
+      <p style="font-size:11px;color:var(--muted);margin-top:8px">Costs are estimates. Set real per-1M-token rates in the RATES constant in this file.</p>
     </div>
 
     <!-- DRILL-DOWN -->
-    <div id="drill" class="card hidden">
-      <h2 style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--fg)">
-        Prompts — <span id="drillCoder" style="color:var(--accent)"></span>
-        <span class="pill" style="margin-left:6px;text-transform:none;letter-spacing:0">role-gated · access logged</span>
-        <button onclick="document.getElementById('drill').classList.add('hidden')" style="float:right;padding:3px 10px;font-size:11px;background:var(--card2);color:var(--muted);border:1px solid var(--line)">✕ close</button>
-      </h2>
-      <div id="drillBody" style="margin-top:12px"></div>
+    <div class="card hidden" id="drillCard">
+      <div class="card-head" style="margin-bottom:12px">
+        <h2 style="font-size:13px;text-transform:none;letter-spacing:0;color:var(--fg)">
+          Prompts — <span id="drillName" style="color:var(--accent)"></span>
+        </h2>
+        <span class="pill pill-purple">role-gated · access logged</span>
+        <button class="btn btn-ghost" style="margin-left:auto;padding:0 10px;height:26px;font-size:11px" onclick="closeDrill()">✕ close</button>
+      </div>
+      <div id="drillBody"></div>
     </div>
 
   </div><!-- /app -->
 </main>
 
 <script>
-// ── Config ──────────────────────────────────────────────────────────────────
+// ── Config ───────────────────────────────────────────────────────────────────
 const RATES = {
-  'claude-opus-4-8':          [15,   75],
-  'claude-sonnet-4-6':        [ 3,   15],
-  'claude-haiku-4-5-20251001':[ 1,    5],
-  'opencode':                 [ 0.3,  0.9],
-  'default':                  [ 3,   15],
+  'claude-opus-4-8':           [15,   75],
+  'claude-sonnet-4-6':         [ 3,   15],
+  'claude-haiku-4-5-20251001': [ 1,    5],
+  'opencode':                  [ 0.3,  0.9],
+  'default':                   [ 3,   15],
 };
-const MODEL_COLORS = {
-  'claude-opus-4-8':           '#b06ef7',
-  'claude-sonnet-4-6':         '#5b9cf6',
-  'claude-haiku-4-5-20251001': '#3ecf8e',
-  'opencode':                  '#f0a050',
-  'unknown':                   '#7a8499',
+const MODEL_CLR = {
+  'claude-opus-4-8':           '#a78bfa',
+  'claude-sonnet-4-6':         '#4f8ef7',
+  'claude-haiku-4-5-20251001': '#34d399',
+  'opencode':                  '#fb923c',
+  'unknown':                   '#5a6380',
 };
-const COMPLEXITY_COLORS = { simple:'#3ecf8e', moderate:'#5b9cf6', critical:'#f06070' };
-Chart.defaults.color = '#7a8499';
-Chart.defaults.borderColor = '#232837';
-Chart.defaults.font.family = 'system-ui,Segoe UI,Roboto,sans-serif';
+const TASK_CLR = { simple:'#34d399', moderate:'#4f8ef7', critical:'#f87171', unknown:'#5a6380' };
+
+Chart.defaults.color = '#5a6380';
+Chart.defaults.borderColor = '#1e2535';
+Chart.defaults.font.family = 'Inter,system-ui,sans-serif';
 Chart.defaults.font.size = 11;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-const $ = s => document.querySelector(s);
-function rateFor(m){ return RATES[m] || RATES['default']; }
-function estCost(r){
-  const [rIn,rOut] = rateFor(r.model ?? r.agent ?? 'default');
-  return (r.tokens_in||0)/1e6*rIn + (r.tokens_out||0)/1e6*rOut + (r.tokens_cache_read||0)/1e6*rIn*0.1;
-}
-function fmt(n){ return n>=1e6 ? (n/1e6).toFixed(1)+'M' : n>=1e3 ? (n/1e3).toFixed(0)+'k' : String(n||0); }
-function pill(text,cls=''){return `<span class="pill ${cls}">${text}</span>`;}
-function modelColor(m){ return MODEL_COLORS[m] || '#7a8499'; }
+const $  = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const rate = m => RATES[m] || RATES['default'];
+const cost = r => {
+  const [ri,ro] = rate(r.model ?? r.agent ?? 'default');
+  return (r.tokens_in||0)/1e6*ri + (r.tokens_out||0)/1e6*ro + (r.tokens_cache_read||0)/1e6*ri*0.1;
+};
+const fmt = n => n == null ? '0' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(0)+'k' : String(n);
+const fmtDate = s => s ? new Date(s).toLocaleString() : '';
+const shortModel = m => (m||'?').replace('claude-','').replace('-20251001','');
+const modelClr = m => MODEL_CLR[m] || '#5a6380';
+const pill = (t,cls='pill-muted') => `<span class="pill ${cls}">${t}</span>`;
+const esc = s => (s||'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
-async function api(path){
-  const r = await fetch(path,{credentials:'same-origin'});
-  if(r.status===401){ showLogin(); throw new Error('unauthorized'); }
+// close coder dropdown on outside click
+document.addEventListener('click', e => {
+  if (!$('#coderDd').contains(e.target)) $('#coderPanel').classList.remove('open');
+});
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+async function apiFetch(path, opts) {
+  const r = await fetch(path, { credentials:'same-origin', ...opts });
+  if (r.status === 401) { showLogin(); throw new Error('unauthorized'); }
   return r.json();
 }
-function showLogin(){ $('#loginWrap').classList.remove('hidden'); $('#app').classList.add('hidden'); $('#logout').classList.add('hidden'); $('#refreshBtn').classList.add('hidden'); }
-function showApp()  { $('#loginWrap').classList.add('hidden');    $('#app').classList.remove('hidden'); $('#logout').classList.remove('hidden'); $('#refreshBtn').classList.remove('hidden'); }
-
-$('#loginBtn').onclick = async () => {
-  const r = await fetch('/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token:$('#token').value}),credentials:'same-origin'});
-  if(!r.ok){ $('#loginErr').textContent='Invalid token.'; return; }
-  $('#loginErr').textContent=''; $('#token').value=''; showApp(); loadAll();
-};
-$('#logout').onclick  = async () => { await fetch('/logout',{method:'POST',credentials:'same-origin'}); showLogin(); };
-$('#refreshBtn').onclick = () => loadAll();
-
-// ── Charts ────────────────────────────────────────────────────────────────────
-const charts = {};
-function mkChart(id, type, data, opts={}){
-  if(charts[id]) charts[id].destroy();
-  charts[id] = new Chart($(id).getContext('2d'),{type, data, options:{responsive:true, maintainAspectRatio:true, plugins:{legend:{position:type==='bar'?'top':'right', labels:{boxWidth:10,padding:10}}}, ...opts}});
+function showLogin() {
+  $('#loginWrap').classList.remove('hidden');
+  $('#app').classList.add('hidden');
+  $('#logoutBtn').classList.add('hidden');
+  $('#refreshBtn').classList.add('hidden');
+}
+function showApp() {
+  $('#loginWrap').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  $('#logoutBtn').classList.remove('hidden');
+  $('#refreshBtn').classList.remove('hidden');
+}
+async function doLogin() {
+  $('#loginErr').textContent = '';
+  const r = await fetch('/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ token: $('#tokenInput').value }), credentials:'same-origin' });
+  if (!r.ok) { $('#loginErr').textContent = 'Invalid token.'; return; }
+  $('#tokenInput').value = '';
+  showApp();
+  await initCoderList();
+  applyFilters();
+}
+async function doLogout() {
+  await fetch('/logout', { method:'POST', credentials:'same-origin' });
+  showLogin();
 }
 
-// ── Data loading ──────────────────────────────────────────────────────────────
-let _report=null, _tokens=null;
+// ── Filter state ──────────────────────────────────────────────────────────────
+let _coders = [];   // all coders from server
+let _selCoders = new Set(); // empty = all
 
-async function loadAll(){
-  [_report, _tokens] = await Promise.all([api('/api/report'), api('/api/tokens')]);
+function toggleCoderPanel(e) {
+  e.stopPropagation();
+  $('#coderPanel').classList.toggle('open');
+}
+function toggleAllCoders(cb) {
+  $$('#coderChecks input').forEach(c => { c.checked = cb.checked; });
+  updateCoderLabel();
+}
+function updateCoderLabel() {
+  const all  = [...$$('#coderChecks input')];
+  const sel  = all.filter(c => c.checked);
+  _selCoders = sel.length === all.length ? new Set() : new Set(sel.map(c => c.value));
+  const txt  = _selCoders.size === 0 ? 'All coders' : _selCoders.size === 1 ? [..._selCoders][0] : `${_selCoders.size} coders`;
+  $('#coderBtnLbl').childNodes[0].textContent = txt;
+  $('#ckAll').checked = _selCoders.size === 0;
+}
+
+async function initCoderList() {
+  const d = await apiFetch('/api/coders');
+  _coders = d.coders || [];
+  const box = $('#coderChecks');
+  box.innerHTML = '';
+  _coders.forEach(c => {
+    const lbl = document.createElement('label');
+    lbl.innerHTML = `<input type="checkbox" value="${esc(c)}" checked onchange="updateCoderLabel()"/> ${esc(c)}`;
+    box.appendChild(lbl);
+  });
+}
+
+// Default date range: last 90 days
+function setDefaultDates() {
+  const to   = new Date();
+  const from = new Date(Date.now() - 89 * 86400_000);
+  $('#fTo').value   = to.toISOString().slice(0,10);
+  $('#fFrom').value = from.toISOString().slice(0,10);
+}
+function resetFilters() {
+  setDefaultDates();
+  $$('#coderChecks input').forEach(c => c.checked = true);
+  $('#ckAll').checked = true;
+  updateCoderLabel();
+  applyFilters();
+}
+
+function buildQS() {
+  const p = new URLSearchParams();
+  if ($('#fFrom').value) p.set('from', $('#fFrom').value);
+  if ($('#fTo').value)   p.set('to',   $('#fTo').value);
+  if (_selCoders.size)   p.set('coders', [..._selCoders].join(','));
+  return p.toString() ? '?' + p.toString() : '';
+}
+
+function renderTags() {
+  const tags = [];
+  if ($('#fFrom').value) tags.push(`From: ${$('#fFrom').value}`);
+  if ($('#fTo').value)   tags.push(`To: ${$('#fTo').value}`);
+  if (_selCoders.size)   tags.push(`Coders: ${[..._selCoders].join(', ')}`);
+  $('#activeTags').innerHTML = tags.map(t => `<span class="filter-tag">${esc(t)}</span>`).join('');
+}
+
+// ── Data & render ─────────────────────────────────────────────────────────────
+let _charts = {};
+function mkChart(id, type, data, opts={}) {
+  if (_charts[id]) _charts[id].destroy();
+  _charts[id] = new Chart($(id).getContext('2d'), {
+    type, data,
+    options:{ responsive:true, maintainAspectRatio:true, plugins:{ legend:{ labels:{ boxWidth:10, padding:10 } } }, ...opts }
+  });
+}
+
+let _report=null, _tokens=null, _activity=null, _complexity=null;
+
+async function applyFilters() {
+  renderTags();
+  const qs = buildQS();
+  [_report, _tokens, _activity, _complexity] = await Promise.all([
+    apiFetch('/api/report'    + qs),
+    apiFetch('/api/tokens'    + qs),
+    apiFetch('/api/activity'  + qs),
+    apiFetch('/api/complexity'+ qs),
+  ]);
   renderKPIs();
+  renderTimeline();
   renderCharts();
   renderCoderTable();
   renderTokenTable();
+  closeDrill();
   $('#lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 
-function renderKPIs(){
+function renderKPIs() {
   const coders = _report.coders;
-  const totalCost = _tokens.rows.reduce((s,r)=>s+estCost(r),0);
-  const totalTok  = coders.reduce((s,c)=>s+(c.tokens_in||0)+(c.tokens_out||0),0);
-  const totalSess = coders.reduce((s,c)=>s+(c.sessions||0),0);
-  $('#kpiCoders').textContent   = coders.length;
-  $('#kpiSessions').textContent = totalSess.toLocaleString();
-  $('#kpiCost').textContent     = '$' + totalCost.toFixed(2);
-  $('#kpiTokens').textContent   = (totalTok/1e6).toFixed(1)+'M';
+  const total  = (k) => coders.reduce((s,c) => s+(c[k]||0), 0);
+  const totalCost = _tokens.rows.reduce((s,r) => s+cost(r), 0);
+  const totalTok  = total('tokens_in') + total('tokens_out');
+  $('#kCoders').textContent   = coders.length;
+  $('#kSessions').textContent = total('sessions').toLocaleString();
+  $('#kCost').textContent     = '$' + totalCost.toFixed(2);
+  $('#kTokens').textContent   = fmt(totalTok);
+  $('#kMisuse').textContent   = total('simple_on_opus');
 }
 
-function renderCharts(){
-  const coders = _report.coders;
+function renderTimeline() {
+  const rows = _activity.rows || [];
+  const labels = rows.map(r => r.date);
+  mkChart('cTimeline','line',{
+    labels,
+    datasets:[
+      { label:'Sessions', data:rows.map(r=>r.sessions), borderColor:'#4f8ef7', backgroundColor:'#4f8ef720', fill:true, tension:.3, yAxisID:'y', pointRadius:3 },
+      { label:'Input tokens (k)', data:rows.map(r=>Math.round((r.tokens_in||0)/1e3)), borderColor:'#a78bfa', backgroundColor:'transparent', tension:.3, yAxisID:'y2', pointRadius:2, borderDash:[4,3] },
+      { label:'Active coders', data:rows.map(r=>r.active_coders), borderColor:'#34d399', backgroundColor:'transparent', tension:.3, yAxisID:'y3', pointRadius:2 },
+    ]
+  },{
+    plugins:{ legend:{ position:'top' } },
+    scales:{
+      x:{ ticks:{ maxTicksLimit:12 } },
+      y:{ position:'left', title:{ display:true, text:'Sessions' } },
+      y2:{ position:'right', grid:{ drawOnChartArea:false }, title:{ display:true, text:'Tokens (k)' } },
+      y3:{ display:false },
+    }
+  });
+}
+
+function renderCharts() {
+  const coders    = _report.coders;
   const tokenRows = _tokens.rows;
 
-  // 1. Token spend by coder (stacked bar: input / output)
-  mkChart('chartCoderTokens','bar',{
+  // token by coder (stacked)
+  mkChart('cCoderTokens','bar',{
     labels: coders.map(c=>c.coder),
     datasets:[
-      {label:'Input',  data:coders.map(c=>+(c.tokens_in||0)/1e6), backgroundColor:'#5b9cf6cc'},
-      {label:'Output', data:coders.map(c=>+(c.tokens_out||0)/1e6), backgroundColor:'#7c6af7cc'},
+      { label:'Input',  data:coders.map(c=>(c.tokens_in||0)/1e6),  backgroundColor:'#4f8ef7bb' },
+      { label:'Output', data:coders.map(c=>(c.tokens_out||0)/1e6), backgroundColor:'#a78bfabb' },
     ]
-  },{plugins:{legend:{position:'top'}}, scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'Millions'}}}});
+  },{ plugins:{legend:{position:'top'}}, scales:{ x:{stacked:true}, y:{stacked:true,title:{display:true,text:'M tokens'}} } });
 
-  // 2. Model distribution (donut)
-  const modelTotals = {};
-  for(const r of tokenRows){
-    const m = r.model||'unknown';
-    modelTotals[m]=(modelTotals[m]||0)+(r.sessions||0);
-  }
-  const mLabels=Object.keys(modelTotals), mVals=mLabels.map(k=>modelTotals[k]);
-  mkChart('chartModels','doughnut',{
-    labels:mLabels.map(m=>m.replace('claude-','').replace('-20251001','')),
-    datasets:[{data:mVals, backgroundColor:mLabels.map(m=>modelColor(m)), borderWidth:2, borderColor:'#13161e'}]
-  },{cutout:'60%'});
+  // model donut
+  const mTot = {};
+  tokenRows.forEach(r=>{ mTot[r.model]=(mTot[r.model]||0)+(r.sessions||0); });
+  const mL = Object.keys(mTot);
+  mkChart('cModels','doughnut',{
+    labels: mL.map(shortModel),
+    datasets:[{ data:mL.map(k=>mTot[k]), backgroundColor:mL.map(modelClr), borderWidth:2, borderColor:'#111520' }]
+  },{ cutout:'62%', plugins:{ legend:{ position:'right' } } });
 
-  // 3. Task complexity (donut) — derived from coder table simple_on_opus as a proxy
-  // We aggregate by task class across token rows — use sessions as weight, simple_on_opus for now
-  const totalSimpleOpus = coders.reduce((s,c)=>s+(c.simple_on_opus||0),0);
-  const totalSessions   = coders.reduce((s,c)=>s+(c.sessions||0),0);
-  const estimatedSimple   = Math.max(totalSimpleOpus, Math.round(totalSessions*0.3));
-  const estimatedCritical = Math.round(totalSessions*0.15);
-  const estimatedModerate = totalSessions - estimatedSimple - estimatedCritical;
-  mkChart('chartComplexity','doughnut',{
+  // complexity donut
+  const cxRows = _complexity.rows || [];
+  const cxL = ['simple','moderate','critical'];
+  const cxV = cxL.map(k => (cxRows.find(r=>r.task_class===k)||{sessions:0}).sessions);
+  mkChart('cComplexity','doughnut',{
     labels:['Simple','Moderate','Critical'],
-    datasets:[{
-      data:[estimatedSimple, Math.max(0,estimatedModerate), estimatedCritical],
-      backgroundColor:[COMPLEXITY_COLORS.simple, COMPLEXITY_COLORS.moderate, COMPLEXITY_COLORS.critical],
-      borderWidth:2, borderColor:'#13161e'
-    }]
-  },{cutout:'60%'});
+    datasets:[{ data:cxV, backgroundColor:cxL.map(k=>TASK_CLR[k]), borderWidth:2, borderColor:'#111520' }]
+  },{ cutout:'62%', plugins:{ legend:{ position:'right' } } });
 
-  // 4. Est. cost by coder (horizontal bar)
+  // cost by coder (horiz bar)
   const coderCosts = coders.map(c=>{
-    const myRows = tokenRows.filter(r=>r.coder===c.coder);
-    return { coder:c.coder, cost: myRows.reduce((s,r)=>s+estCost(r),0) };
-  }).sort((a,b)=>b.cost-a.cost);
-  mkChart('chartCoderCost','bar',{
-    labels:coderCosts.map(c=>c.coder),
-    datasets:[{label:'Est. cost (USD)', data:coderCosts.map(c=>+c.cost.toFixed(2)), backgroundColor:coderCosts.map((_,i)=>`hsl(${200+i*37},70%,58%)`), borderRadius:4}]
-  },{indexAxis:'y', plugins:{legend:{display:false}}, scales:{x:{title:{display:true,text:'USD'}}}});
+    const c2 = tokenRows.filter(r=>r.coder===c.coder).reduce((s,r)=>s+cost(r),0);
+    return { coder:c.coder, val:+c2.toFixed(2) };
+  }).sort((a,b)=>b.val-a.val);
+  mkChart('cCoderCost','bar',{
+    labels: coderCosts.map(c=>c.coder),
+    datasets:[{ label:'Est. cost (USD)', data:coderCosts.map(c=>c.val), backgroundColor:coderCosts.map((_,i)=>`hsl(${210+i*40},70%,58%)`), borderRadius:4 }]
+  },{ indexAxis:'y', plugins:{legend:{display:false}}, scales:{ x:{title:{display:true,text:'USD'}} } });
 
-  // 5. Claude vs OpenCode (grouped bar)
-  mkChart('chartAgents','bar',{
-    labels:coders.map(c=>c.coder),
+  // agent grouped bar
+  mkChart('cAgents','bar',{
+    labels: coders.map(c=>c.coder),
     datasets:[
-      {label:'Claude Code', data:coders.map(c=>c.claude||0), backgroundColor:'#5b9cf6cc', borderRadius:3},
-      {label:'OpenCode',    data:coders.map(c=>c.opencode||0), backgroundColor:'#f0a050cc', borderRadius:3},
+      { label:'Claude Code', data:coders.map(c=>c.claude||0), backgroundColor:'#4f8ef7bb', borderRadius:3 },
+      { label:'OpenCode',    data:coders.map(c=>c.opencode||0), backgroundColor:'#fb923cbb', borderRadius:3 },
     ]
-  },{plugins:{legend:{position:'top'}}, scales:{x:{},y:{ticks:{stepSize:1}}}});
+  },{ plugins:{legend:{position:'top'}}, scales:{ y:{ticks:{stepSize:1}} } });
 }
 
-function renderCoderTable(){
-  const tb = $('#coderTable tbody'); tb.innerHTML='';
-  const sorted = [..._report.coders].sort((a,b)=>{
-    const ca = _tokens.rows.filter(r=>r.coder===a.coder).reduce((s,r)=>s+estCost(r),0);
-    const cb = _tokens.rows.filter(r=>r.coder===b.coder).reduce((s,r)=>s+estCost(r),0);
-    return cb-ca;
+function renderCoderTable() {
+  const coders = [..._report.coders].sort((a,b) => {
+    const ca = _tokens.rows.filter(r=>r.coder===a.coder).reduce((s,r)=>s+cost(r),0);
+    const cb = _tokens.rows.filter(r=>r.coder===b.coder).reduce((s,r)=>s+cost(r),0);
+    return cb - ca;
   });
-  for(const c of sorted){
+  const tb = $('#coderTbody'); tb.innerHTML = '';
+  for (const c of coders) {
     const myRows = _tokens.rows.filter(r=>r.coder===c.coder);
-    const cost = myRows.reduce((s,r)=>s+estCost(r),0);
-    const tr=document.createElement('tr');
-    tr.className='clickable';
-    tr.innerHTML=`
-      <td><strong>${c.coder}</strong></td>
-      <td class="right">${c.sessions}</td>
-      <td class="right">${c.claude?pill(c.claude,''):'<span class="muted">0</span>'}</td>
-      <td class="right">${c.opencode?pill(c.opencode,'orange'):'<span class="muted">0</span>'}</td>
-      <td class="right">${fmt(c.tokens_in||0)}</td>
-      <td class="right">${fmt(c.tokens_out||0)}</td>
-      <td class="right"><strong>~$${cost.toFixed(2)}</strong></td>
-      <td class="right ${(c.simple_on_opus||0)>0?'warn':''}">${c.simple_on_opus||0}</td>
-      <td style="font-size:11px">${(c.agent_accounts||[]).map(a=>pill(a.slice(0,12)+'…')).join(' ')||'<span class="muted">—</span>'}</td>
-      <td class="muted" style="font-size:11px">${(c.ips||[]).filter(ip=>!ip.startsWith('fe80')).join(', ')||'—'}</td>`;
-    tr.onclick=()=>drill(c.coder);
+    const c2 = myRows.reduce((s,r)=>s+cost(r),0);
+    const accts = (c.agent_accounts||[]);
+    const acctHtml = accts.length
+      ? accts.map(a => `<span class="pill pill-muted" title="${esc(a)}" style="font-size:10px">${esc(a.length>20?a.slice(0,18)+'…':a)}</span>`).join(' ')
+      : '<span style="color:var(--muted)">—</span>';
+    const ips = (c.ips||[]).filter(ip=>!ip.startsWith('fe80') && !ip.startsWith('::1')).join(', ') || '—';
+    const tr = document.createElement('tr');
+    tr.className = 'row';
+    tr.innerHTML = `
+      <td><strong>${esc(c.coder)}</strong></td>
+      <td>${acctHtml}</td>
+      <td class="r">${c.sessions}</td>
+      <td class="r">${c.claude ? pill(c.claude,'pill-blue') : '<span style="color:var(--muted)">0</span>'}</td>
+      <td class="r">${c.opencode ? pill(c.opencode,'pill-orange') : '<span style="color:var(--muted)">0</span>'}</td>
+      <td class="r">${fmt(c.tokens_in)}</td>
+      <td class="r">${fmt(c.tokens_out)}</td>
+      <td class="r"><strong>~$${c2.toFixed(2)}</strong></td>
+      <td class="r ${(c.simple_on_opus||0)>0?'warn':''}">${c.simple_on_opus||0}</td>
+      <td style="color:var(--muted);font-size:11px">${esc(ips)}</td>`;
+    tr.onclick = () => drilldown(c.coder);
     tb.appendChild(tr);
   }
 }
 
-function renderTokenTable(){
-  const tb = $('#tokenTable tbody'); tb.innerHTML='';
-  let prevCoder=null, coderTotal={ti:0,to:0,tc:0,cost:0,s:0};
-  const flush=coder=>{
-    if(!coder)return;
-    const tr=document.createElement('tr');
-    tr.style.cssText='font-weight:600;background:#10131a';
-    tr.innerHTML=`<td>${coder} <span class="muted" style="font-weight:400;font-size:11px">total</span></td><td></td>
-      <td class="right">${coderTotal.s}</td>
-      <td class="right">${fmt(coderTotal.ti)}</td><td class="right">${fmt(coderTotal.to)}</td>
-      <td class="right">${fmt(coderTotal.tc)}</td>
-      <td class="right">~$${coderTotal.cost.toFixed(2)}</td>`;
+function renderTokenTable() {
+  const tb = $('#tokenTbody'); tb.innerHTML = '';
+  let prev=null, tot={ti:0,to:0,tc:0,c:0,s:0};
+  const flush = coder => {
+    if (!coder) return;
+    const tr = document.createElement('tr');
+    tr.className = 'total-row';
+    tr.innerHTML = `<td>${esc(coder)} <span style="font-weight:400;color:var(--muted);font-size:11px">total</span></td>
+      <td></td><td class="r">${tot.s}</td>
+      <td class="r">${fmt(tot.ti)}</td><td class="r">${fmt(tot.to)}</td>
+      <td class="r">${fmt(tot.tc)}</td><td class="r">~$${tot.c.toFixed(2)}</td>`;
     tb.appendChild(tr);
-    coderTotal={ti:0,to:0,tc:0,cost:0,s:0};
+    tot={ti:0,to:0,tc:0,c:0,s:0};
   };
-  for(const r of _tokens.rows){
-    if(r.coder!==prevCoder && prevCoder!==null) flush(prevCoder);
-    prevCoder=r.coder;
-    const cost=estCost(r);
-    coderTotal.ti+=(r.tokens_in||0); coderTotal.to+=(r.tokens_out||0);
-    coderTotal.tc+=(r.tokens_cache_read||0); coderTotal.cost+=cost; coderTotal.s+=(r.sessions||0);
-    const shortModel = (r.model||'unknown').replace('claude-','').replace('-20251001','');
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td class="muted">${r.coder}</td>
-      <td><span class="pill" style="background:#13182a;color:${modelColor(r.model||'unknown')}">${shortModel}</span></td>
-      <td class="right">${r.sessions}</td>
-      <td class="right">${fmt(r.tokens_in||0)}</td><td class="right">${fmt(r.tokens_out||0)}</td>
-      <td class="right">${fmt(r.tokens_cache_read||0)}</td>
-      <td class="right">~$${cost.toFixed(2)}</td>`;
+  for (const r of _tokens.rows) {
+    if (r.coder !== prev && prev !== null) flush(prev);
+    prev = r.coder;
+    const c2 = cost(r);
+    tot.ti+=r.tokens_in||0; tot.to+=r.tokens_out||0;
+    tot.tc+=r.tokens_cache_read||0; tot.c+=c2; tot.s+=r.sessions||0;
+    const sm = shortModel(r.model);
+    const cl = modelClr(r.model);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="color:var(--muted)">${esc(r.coder)}</td>
+      <td><span class="pill" style="background:#0e1525;color:${cl}">${esc(sm)}</span></td>
+      <td class="r">${r.sessions}</td>
+      <td class="r">${fmt(r.tokens_in)}</td><td class="r">${fmt(r.tokens_out)}</td>
+      <td class="r">${fmt(r.tokens_cache_read)}</td>
+      <td class="r">~$${c2.toFixed(2)}</td>`;
     tb.appendChild(tr);
   }
-  flush(prevCoder);
+  flush(prev);
 }
 
-async function drill(coder){
-  const data = await api('/api/coder/'+encodeURIComponent(coder));
-  $('#drill').classList.remove('hidden');
-  $('#drillCoder').textContent=coder;
-  const rows = data.interactions.map(i=>{
-    const shortModel=(i.model||'?').replace('claude-','').replace('-20251001','');
-    const cls = i.task_class==='critical'?'red':i.task_class==='simple'?'green':'';
-    return `<div class="drill-row">
-      <div class="drill-meta">
-        <span>${i.ts?new Date(i.ts).toLocaleString():''}</span>
-        <span class="pill" style="background:#13182a;color:${modelColor(i.model||'')}">${shortModel}</span>
-        <span class="pill ${cls}">${i.task_class||'?'}</span>
-        ${i.git_branch?`<span class="muted">⎇ ${i.git_branch}</span>`:''}
-        ${i.agent_account_id?`<span class="pill">${i.agent_account_id.slice(0,14)}…</span>`:''}
-      </div>
-      <pre>${(i.prompt||'(no prompt)').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</pre>
-    </div>`;
-  }).join('');
-  $('#drillBody').innerHTML = rows || '<p class="muted">No prompts captured yet.</p>';
-  $('#drill').scrollIntoView({behavior:'smooth'});
+// ── Drill-down ────────────────────────────────────────────────────────────────
+async function drilldown(coder) {
+  const qs = buildQS();
+  const data = await apiFetch('/api/coder/' + encodeURIComponent(coder) + qs);
+  $('#drillCard').classList.remove('hidden');
+  $('#drillName').textContent = coder;
+  const items = data.interactions || [];
+  if (!items.length) { $('#drillBody').innerHTML = '<p style="color:var(--muted)">No prompts in this range.</p>'; }
+  else {
+    $('#drillBody').innerHTML = items.map(i => {
+      const sm    = shortModel(i.model);
+      const cl    = modelClr(i.model);
+      const tc    = i.task_class || 'unknown';
+      const tcCls = { simple:'pill-green', moderate:'pill-blue', critical:'pill-red' }[tc] || 'pill-muted';
+      const acct  = i.agent_account_id ? pill(esc(i.agent_account_id.length>24?i.agent_account_id.slice(0,22)+'…':i.agent_account_id),'pill-muted') : '';
+      return `<div class="drill-item">
+        <div class="drill-meta">
+          <span>${fmtDate(i.ts)}</span>
+          <span class="pill" style="background:#0e1525;color:${cl}">${esc(sm)}</span>
+          ${pill(tc, tcCls)}
+          ${i.git_branch ? `<span>⎇ ${esc(i.git_branch)}</span>` : ''}
+          ${i.tokens_in || i.tokens_out ? `<span>${fmt(i.tokens_in)}↑ ${fmt(i.tokens_out)}↓</span>` : ''}
+          ${acct}
+        </div>
+        <pre>${esc(i.prompt || '(no prompt captured)')}</pre>
+      </div>`;
+    }).join('');
+  }
+  $('#drillCard').scrollIntoView({ behavior:'smooth' });
 }
+function closeDrill() { $('#drillCard').classList.add('hidden'); }
 
-// Try existing session on page load
-api('/api/report').then(()=>{showApp();loadAll();}).catch(()=>showLogin());
+// ── Boot ──────────────────────────────────────────────────────────────────────
+setDefaultDates();
+apiFetch('/api/report').then(async () => {
+  showApp();
+  await initCoderList();
+  applyFilters();
+}).catch(() => showLogin());
 </script>
 </body>
 </html>

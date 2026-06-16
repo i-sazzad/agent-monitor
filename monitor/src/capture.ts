@@ -8,7 +8,7 @@
  */
 import { createHash } from 'crypto';
 import { readClaude, readOpencode, RawSession } from './parsers';
-import { coderLogin, localIps, claudeAccountId, opencodeAccountId } from './identity';
+import { coderLogin, localIps, claudeAccountLabel, opencodeAccountId } from './identity';
 import { classify } from './classify';
 import { redact } from './redact';
 import { Interaction } from './types';
@@ -58,7 +58,7 @@ async function shipToBackend(url: string, records: Interaction[]): Promise<void>
 async function main(): Promise<void> {
   const coder = coderLogin();
   const ips = localIps();
-  const accounts = { claude: claudeAccountId(), opencode: opencodeAccountId() };
+  const accounts = { claude: claudeAccountLabel(), opencode: opencodeAccountId() };
   const raws = [...readClaude(), ...readOpencode()];
   const records = raws.map((r) => toInteraction(r, coder, ips, accounts));
   console.log(
