@@ -184,9 +184,9 @@
     <div class="kpis">
       <div class="kpi c-blue"><div class="lbl">Active coders</div><div class="val" id="kCoders">—</div><div class="sub">machines reporting</div></div>
       <div class="kpi c-green"><div class="lbl">Total sessions</div><div class="val" id="kSessions">—</div><div class="sub">all agents</div></div>
-      <div class="kpi c-orange"><div class="lbl">Est. total cost</div><div class="val" id="kCost">—</div><div class="sub">placeholder rates</div></div>
-      <div class="kpi c-purple"><div class="lbl">Total tokens</div><div class="val" id="kTokens">—</div><div class="sub">input + output</div></div>
-      <div class="kpi c-cyan"><div class="lbl">Simple → Opus</div><div class="val" id="kMisuse">—</div><div class="sub">cost signal only</div></div>
+      <div class="kpi c-purple"><div class="lbl">Input tokens</div><div class="val" id="kTokensIn">—</div><div class="sub">across all coders</div></div>
+      <div class="kpi c-orange"><div class="lbl">Output tokens</div><div class="val" id="kTokensOut">—</div><div class="sub">across all coders</div></div>
+      <div class="kpi c-cyan"><div class="lbl">Simple → Opus</div><div class="val" id="kMisuse">—</div><div class="sub">model mismatch signal</div></div>
     </div>
 
     <!-- ACTIVITY TIMELINE (full width) -->
@@ -204,8 +204,8 @@
 
     <!-- CHARTS ROW 2 -->
     <div class="chart-grid-2">
-      <div class="chart-box"><div class="ch">💰 Est. cost by coder (USD)</div><canvas id="cCoderCost"></canvas></div>
       <div class="chart-box"><div class="ch">⚡ Claude vs OpenCode sessions</div><canvas id="cAgents"></canvas></div>
+      <div class="chart-box"><div class="ch">🔢 Sessions by coder</div><canvas id="cCoderSessions"></canvas></div>
     </div>
 
     <!-- CODER TABLE -->
@@ -220,7 +220,7 @@
             <th>Coder</th><th>Account</th><th class="r">Sessions</th>
             <th class="r">Claude</th><th class="r">OpenCode</th>
             <th class="r">Input tok.</th><th class="r">Output tok.</th>
-            <th class="r">Est. cost</th><th class="r">Simple→Opus</th><th>IPs</th>
+            <th class="r">Simple→Opus</th><th>IPs</th>
           </tr></thead>
           <tbody id="coderTbody"></tbody>
         </table>
@@ -236,12 +236,11 @@
           <thead><tr>
             <th>Coder</th><th>Model</th><th class="r">Sessions</th>
             <th class="r">Input</th><th class="r">Output</th>
-            <th class="r">Cache read</th><th class="r">Est. cost</th>
+            <th class="r">Cache read</th>
           </tr></thead>
           <tbody id="tokenTbody"></tbody>
         </table>
       </div>
-      <p style="font-size:11px;color:var(--muted);margin-top:8px">Costs are estimates. Set real per-1M-token rates in the RATES constant in this file.</p>
     </div>
 
     <!-- DRILL-DOWN -->
@@ -437,13 +436,11 @@ async function applyFilters() {
 function renderKPIs() {
   const coders = _report.coders;
   const total  = (k) => coders.reduce((s,c) => s+(c[k]||0), 0);
-  const totalCost = _tokens.rows.reduce((s,r) => s+cost(r), 0);
-  const totalTok  = total('tokens_in') + total('tokens_out');
-  $('#kCoders').textContent   = coders.length;
-  $('#kSessions').textContent = total('sessions').toLocaleString();
-  $('#kCost').textContent     = '$' + totalCost.toFixed(2);
-  $('#kTokens').textContent   = fmt(totalTok);
-  $('#kMisuse').textContent   = total('simple_on_opus');
+  $('#kCoders').textContent    = coders.length;
+  $('#kSessions').textContent  = total('sessions').toLocaleString();
+  $('#kTokensIn').textContent  = fmt(total('tokens_in'));
+  $('#kTokensOut').textContent = fmt(total('tokens_out'));
+  $('#kMisuse').textContent    = total('simple_on_opus');
 }
 
 function renderTimeline() {
@@ -498,16 +495,6 @@ function renderCharts() {
     datasets:[{ data:cxV, backgroundColor:cxL.map(k=>TASK_CLR[k]), borderWidth:2, borderColor:'#111520' }]
   },{ cutout:'62%', plugins:{ legend:{ position:'right' } } });
 
-  // cost by coder (horiz bar)
-  const coderCosts = coders.map(c=>{
-    const c2 = tokenRows.filter(r=>r.coder===c.coder).reduce((s,r)=>s+cost(r),0);
-    return { coder:c.coder, val:+c2.toFixed(2) };
-  }).sort((a,b)=>b.val-a.val);
-  mkChart('cCoderCost','bar',{
-    labels: coderCosts.map(c=>c.coder),
-    datasets:[{ label:'Est. cost (USD)', data:coderCosts.map(c=>c.val), backgroundColor:coderCosts.map((_,i)=>`hsl(${210+i*40},70%,58%)`), borderRadius:4 }]
-  },{ indexAxis:'y', plugins:{legend:{display:false}}, scales:{ x:{title:{display:true,text:'USD'}} } });
-
   // agent grouped bar
   mkChart('cAgents','bar',{
     labels: coders.map(c=>c.coder),
@@ -516,18 +503,19 @@ function renderCharts() {
       { label:'OpenCode',    data:coders.map(c=>c.opencode||0), backgroundColor:'#fb923cbb', borderRadius:3 },
     ]
   },{ plugins:{legend:{position:'top'}}, scales:{ y:{ticks:{stepSize:1}} } });
+
+  // sessions by coder (horiz bar)
+  const sorted = [...coders].sort((a,b)=>(b.sessions||0)-(a.sessions||0));
+  mkChart('cCoderSessions','bar',{
+    labels: sorted.map(c=>c.coder),
+    datasets:[{ label:'Sessions', data:sorted.map(c=>c.sessions||0), backgroundColor:sorted.map((_,i)=>`hsl(${200+i*40},65%,55%)`), borderRadius:4 }]
+  },{ indexAxis:'y', plugins:{legend:{display:false}}, scales:{ x:{title:{display:true,text:'Sessions'}} } });
 }
 
 function renderCoderTable() {
-  const coders = [..._report.coders].sort((a,b) => {
-    const ca = _tokens.rows.filter(r=>r.coder===a.coder).reduce((s,r)=>s+cost(r),0);
-    const cb = _tokens.rows.filter(r=>r.coder===b.coder).reduce((s,r)=>s+cost(r),0);
-    return cb - ca;
-  });
+  const coders = [..._report.coders].sort((a,b) => (b.sessions||0)-(a.sessions||0));
   const tb = $('#coderTbody'); tb.innerHTML = '';
   for (const c of coders) {
-    const myRows = _tokens.rows.filter(r=>r.coder===c.coder);
-    const c2 = myRows.reduce((s,r)=>s+cost(r),0);
     const accts = (c.agent_accounts||[]);
     const acctHtml = accts.length
       ? accts.map(a => `<span class="pill pill-muted" title="${esc(a)}" style="font-size:10px">${esc(a.length>20?a.slice(0,18)+'…':a)}</span>`).join(' ')
@@ -543,7 +531,6 @@ function renderCoderTable() {
       <td class="r">${c.opencode ? pill(c.opencode,'pill-orange') : '<span style="color:var(--muted)">0</span>'}</td>
       <td class="r">${fmt(c.tokens_in)}</td>
       <td class="r">${fmt(c.tokens_out)}</td>
-      <td class="r"><strong>~$${c2.toFixed(2)}</strong></td>
       <td class="r ${(c.simple_on_opus||0)>0?'warn':''}">${c.simple_on_opus||0}</td>
       <td style="color:var(--muted);font-size:11px">${esc(ips)}</td>`;
     tr.onclick = () => drilldown(c.coder);
@@ -553,7 +540,7 @@ function renderCoderTable() {
 
 function renderTokenTable() {
   const tb = $('#tokenTbody'); tb.innerHTML = '';
-  let prev=null, tot={ti:0,to:0,tc:0,c:0,s:0};
+  let prev=null, tot={ti:0,to:0,tc:0,s:0};
   const flush = coder => {
     if (!coder) return;
     const tr = document.createElement('tr');
@@ -561,16 +548,15 @@ function renderTokenTable() {
     tr.innerHTML = `<td>${esc(coder)} <span style="font-weight:400;color:var(--muted);font-size:11px">total</span></td>
       <td></td><td class="r">${tot.s}</td>
       <td class="r">${fmt(tot.ti)}</td><td class="r">${fmt(tot.to)}</td>
-      <td class="r">${fmt(tot.tc)}</td><td class="r">~$${tot.c.toFixed(2)}</td>`;
+      <td class="r">${fmt(tot.tc)}</td>`;
     tb.appendChild(tr);
-    tot={ti:0,to:0,tc:0,c:0,s:0};
+    tot={ti:0,to:0,tc:0,s:0};
   };
   for (const r of _tokens.rows) {
     if (r.coder !== prev && prev !== null) flush(prev);
     prev = r.coder;
-    const c2 = cost(r);
     tot.ti+=r.tokens_in||0; tot.to+=r.tokens_out||0;
-    tot.tc+=r.tokens_cache_read||0; tot.c+=c2; tot.s+=r.sessions||0;
+    tot.tc+=r.tokens_cache_read||0; tot.s+=r.sessions||0;
     const sm = shortModel(r.model);
     const cl = modelClr(r.model);
     const tr = document.createElement('tr');
@@ -578,8 +564,7 @@ function renderTokenTable() {
       <td><span class="pill" style="background:#0e1525;color:${cl}">${esc(sm)}</span></td>
       <td class="r">${r.sessions}</td>
       <td class="r">${fmt(r.tokens_in)}</td><td class="r">${fmt(r.tokens_out)}</td>
-      <td class="r">${fmt(r.tokens_cache_read)}</td>
-      <td class="r">~$${c2.toFixed(2)}</td>`;
+      <td class="r">${fmt(r.tokens_cache_read)}</td>`;
     tb.appendChild(tr);
   }
   flush(prev);
