@@ -147,6 +147,7 @@ export interface CoderSummary {
   simple_on_opus: number;
   ips: string[];
   agent_accounts: string[];
+  projects: string[];
 }
 
 export function summaryByCoder(f: Filters = {}): CoderSummary[] {
@@ -174,7 +175,10 @@ export function summaryByCoder(f: Filters = {}): CoderSummary[] {
     const acctRows = db.prepare(
       'SELECT DISTINCT agent_account_id FROM interactions WHERE coder=? AND agent_account_id IS NOT NULL'
     ).all(r.coder) as any[];
-    return { ...r, ips: [...ips], agent_accounts: acctRows.map((a: any) => a.agent_account_id) } as CoderSummary;
+    const projRows = db.prepare(
+      'SELECT DISTINCT workspace FROM interactions WHERE coder=? AND workspace IS NOT NULL ORDER BY workspace'
+    ).all(r.coder) as any[];
+    return { ...r, ips: [...ips], agent_accounts: acctRows.map((a: any) => a.agent_account_id), projects: projRows.map((p: any) => p.workspace as string) } as CoderSummary;
   });
 }
 

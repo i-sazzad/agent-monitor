@@ -234,7 +234,7 @@
             <th>Coder</th><th>Account</th><th class="r">Sessions</th><th class="r">Prompts</th>
             <th class="r">Claude</th><th class="r">OpenCode</th>
             <th class="r">Input tok.</th><th class="r">Output tok.</th>
-            <th class="r">Simple→Opus</th><th>IPs</th>
+            <th class="r">Simple→Opus</th><th>Projects</th><th>IPs</th>
           </tr></thead>
           <tbody id="coderTbody"></tbody>
         </table>
@@ -289,6 +289,7 @@ const shortModel = m => (m||'?').replace('claude-','').replace('-20251001','');
 const modelClr = m => MODEL_CLR[m] || '#5a6380';
 const pill = (t,cls='pill-muted') => `<span class="pill ${cls}">${t}</span>`;
 const esc = s => (s||'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const projName = p => { if(!p) return '(unknown)'; const s=p.replace(/\\/g,'/'); return s.split('/').filter(Boolean).pop()||s; };
 
 // close coder dropdown on outside click
 document.addEventListener('click', e => {
@@ -527,6 +528,7 @@ function renderCoderTable() {
       <td class="r">${fmt(c.tokens_in)}</td>
       <td class="r">${fmt(c.tokens_out)}</td>
       <td class="r ${(c.simple_on_opus||0)>0?'warn':''}">${c.simple_on_opus||0}</td>
+      <td style="font-size:11px">${(c.projects||[]).slice(0,3).map(p=>`<span class="pill pill-muted" title="${esc(p)}">${esc(projName(p))}</span>`).join(' ')}${(c.projects||[]).length>3?` <span style="color:var(--muted)">+${c.projects.length-3}</span>`:''}</td>
       <td style="color:var(--muted);font-size:11px">${esc(ips)}</td>`;
     tr.onclick = () => window.open('/coder.html?coder=' + encodeURIComponent(c.coder), '_blank');
     tb.appendChild(tr);
