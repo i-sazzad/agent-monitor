@@ -161,7 +161,7 @@
           <button class="btn btn-ghost" style="padding:0 8px;height:22px;font-size:10px" onclick="$('#fcWrap').classList.add('hidden')">✕</button>
         </div>
         <div class="tbl-wrap"><table>
-          <thead><tr><th>File</th><th class="r">+Added</th><th class="r">−Removed</th><th class="r">Net</th></tr></thead>
+          <thead><tr><th>File</th><th class="r">Agent</th><th class="r">+Added</th><th class="r">−Removed</th><th class="r">Net</th></tr></thead>
           <tbody id="fcTbody"></tbody>
         </table></div>
       </div>
@@ -377,12 +377,19 @@ function showFC(workspace, fcRows) {
   $('#fcProject').textContent = projName(workspace);
   const tb = $('#fcTbody'); tb.innerHTML='';
   if (!rows.length) {
-    tb.innerHTML='<tr><td colspan="4" style="color:var(--muted);padding:8px;text-align:center">No git diff data yet.</td></tr>';
+    tb.innerHTML='<tr><td colspan="5" style="color:var(--muted);padding:8px;text-align:center">No git diff data yet.</td></tr>';
   } else {
     for (const f of rows) {
       const net=f.total_added-f.total_removed;
+      const hasClaude   = f.claude_added   > 0 || f.claude_removed   > 0;
+      const hasOpencode = f.opencode_added > 0 || f.opencode_removed > 0;
+      const agentLabel  = hasClaude && hasOpencode ? '<span style="color:#7c9ef8">Claude</span> + <span style="color:#f8a84b">OC</span>'
+                        : hasClaude   ? '<span style="color:#7c9ef8">Claude</span>'
+                        : hasOpencode ? '<span style="color:#f8a84b">OpenCode</span>'
+                        : '<span style="color:var(--muted)">—</span>';
       const tr=document.createElement('tr');
       tr.innerHTML=`<td style="font-family:ui-monospace,monospace;font-size:11px">${esc(f.file)}</td>
+        <td class="r" style="font-size:11px">${agentLabel}</td>
         <td class="r" style="color:var(--green)">+${f.total_added}</td>
         <td class="r" style="color:var(--red)">-${f.total_removed}</td>
         <td class="r" style="color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'+':''}${net}</td>`;

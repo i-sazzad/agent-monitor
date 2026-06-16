@@ -306,37 +306,45 @@ export interface FileChangeSummary {
   file: string;
   total_added: number;
   total_removed: number;
+  claude_added: number;
+  claude_removed: number;
+  opencode_added: number;
+  opencode_removed: number;
   occurrences: number;
 }
 
 export function fileChangesByProject(f: Filters = {}): FileChangeSummary[] {
   const { sql, params } = where(f);
   const rows = db.prepare(`
-    SELECT workspace, git_changes FROM interactions
+    SELECT workspace, agent, git_changes FROM interactions
     ${sql ? sql + ' AND git_changes IS NOT NULL' : 'WHERE git_changes IS NOT NULL'}
-  `).all(...params) as { workspace: string; git_changes: string }[];
+  `).all(...params) as { workspace: string; agent: string; git_changes: string }[];
 
-  const map = new Map<string, Map<string, { added: number; removed: number; count: number }>>();
+  interface FileStat { added: number; removed: number; claude_added: number; claude_removed: number; opencode_added: number; opencode_removed: number; count: number; }
+  const map = new Map<string, Map<string, FileStat>>();
   for (const row of rows) {
     let changes: { file: string; added: number; removed: number }[];
     try { changes = JSON.parse(row.git_changes); } catch { continue; }
     const ws = row.workspace || '(unknown)';
+    const isClaude = row.agent === 'claude_code';
+    const isOpencode = row.agent === 'opencode';
     if (!map.has(ws)) map.set(ws, new Map());
     const wmap = map.get(ws)!;
     for (const c of changes) {
-      const key = c.file;
-      const cur = wmap.get(key) ?? { added: 0, removed: 0, count: 0 };
+      const cur = wmap.get(c.file) ?? { added: 0, removed: 0, claude_added: 0, claude_removed: 0, opencode_added: 0, opencode_removed: 0, count: 0 };
       cur.added   += c.added;
       cur.removed += c.removed;
-      cur.count   += 1;
-      wmap.set(key, cur);
+      if (isClaude)   { cur.claude_added   += c.added; cur.claude_removed   += c.removed; }
+      if (isOpencode) { cur.opencode_added  += c.added; cur.opencode_removed += c.removed; }
+      cur.count += 1;
+      wmap.set(c.file, cur);
     }
   }
 
   const result: FileChangeSummary[] = [];
   for (const [workspace, files] of map) {
-    for (const [file, stats] of files) {
-      result.push({ workspace, file, total_added: stats.added, total_removed: stats.removed, occurrences: stats.count });
+    for (const [file, s] of files) {
+      result.push({ workspace, file, total_added: s.added, total_removed: s.removed, claude_added: s.claude_added, claude_removed: s.claude_removed, opencode_added: s.opencode_added, opencode_removed: s.opencode_removed, occurrences: s.count });
     }
   }
   return result.sort((a, b) => (b.total_added + b.total_removed) - (a.total_added + a.total_removed));
