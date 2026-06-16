@@ -232,10 +232,10 @@
       <div class="tbl-wrap">
         <table>
           <thead><tr>
-            <th>Coder</th><th>Account</th><th class="r">Sessions</th><th class="r">Prompts</th>
+            <th>Coder</th><th>Account</th><th class="r">Projects</th><th class="r">Sessions</th><th class="r">Prompts</th>
             <th class="r">Claude</th><th class="r">OpenCode</th>
             <th class="r">Input tok.</th><th class="r">Output tok.</th>
-            <th class="r">Simple→Opus</th><th>Projects</th><th>IPs</th>
+            <th class="r">Simple→Opus</th><th>IPs</th>
           </tr></thead>
           <tbody id="coderTbody"></tbody>
         </table>
@@ -524,6 +524,7 @@ function renderCoderTable() {
     tr.innerHTML = `
       <td><strong>${esc(c.coder)}</strong></td>
       <td>${acctHtml}</td>
+      <td class="r">${(c.projects||[]).length || '<span style="color:var(--muted)">0</span>'}</td>
       <td class="r">${c.sessions}</td>
       <td class="r" style="color:var(--muted)">${c.prompts}</td>
       <td class="r">${c.claude ? pill(c.claude,'pill-blue') : '<span style="color:var(--muted)">0</span>'}</td>
@@ -531,7 +532,6 @@ function renderCoderTable() {
       <td class="r">${fmt(c.tokens_in)}</td>
       <td class="r">${fmt(c.tokens_out)}</td>
       <td class="r ${(c.simple_on_opus||0)>0?'warn':''}">${c.simple_on_opus||0}</td>
-      <td class="r">${(c.projects||[]).length || '<span style="color:var(--muted)">0</span>'}</td>
       <td style="color:var(--muted);font-size:11px">${esc(ips)}</td>`;
     tr.onclick = () => {
       const p = new URLSearchParams();
