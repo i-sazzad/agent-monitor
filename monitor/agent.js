@@ -284,17 +284,40 @@ function walkOpencode(dir, res, depth) {
   }
 }
 
-function readOpencode() {
+function opencodeRoots() {
   const home = os.homedir();
   const appdata = process.env.APPDATA || '';
-  const roots = [
+  const local   = process.env.LOCALAPPDATA || '';
+  return [
     process.env.XDG_DATA_HOME ? path.join(process.env.XDG_DATA_HOME, 'opencode') : null,
     path.join(home, '.local', 'share', 'opencode'),
     path.join(home, '.config', 'opencode'),
     path.join(home, '.opencode'),
     appdata ? path.join(appdata, 'opencode') : null,
     appdata ? path.join(appdata, 'OpenCode') : null,
+    local   ? path.join(local,   'opencode') : null,
+    local   ? path.join(local,   'OpenCode') : null,
   ].filter(Boolean);
+}
+
+function scanOpencodeFiles(dir, out, depth) {
+  if (depth > 6) return;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) { scanOpencodeFiles(full, out, depth + 1); continue; }
+    if (!e.isFile()) continue;
+    try {
+      const stat = fs.statSync(full);
+      const head = fs.readFileSync(full).slice(0, 120).toString('utf8').replace(/\n/g,' ');
+      out.push({ path: full, size: stat.size, head });
+    } catch { out.push({ path: full, size: -1, head: '(unreadable)' }); }
+  }
+}
+
+function readOpencode() {
+  const roots = opencodeRoots();
   const res = [];
   const checked = [];
   for (const root of roots) {
@@ -302,6 +325,26 @@ function readOpencode() {
   }
   console.log(`[opencode] searched: ${checked.length ? checked.join(', ') : 'none found'} → ${res.length} session(s)`);
   return res;
+}
+
+function runScan() {
+  const roots = opencodeRoots();
+  console.log('\n=== OpenCode directory scan ===');
+  let any = false;
+  for (const root of roots) {
+    if (!fs.existsSync(root)) { console.log(`  MISSING  ${root}`); continue; }
+    console.log(`  FOUND    ${root}`);
+    any = true;
+    const files = [];
+    scanOpencodeFiles(root, files, 0);
+    if (!files.length) { console.log('    (empty)'); continue; }
+    for (const f of files) {
+      console.log(`    [${String(f.size).padStart(8)} B]  ${f.path}`);
+      console.log(`              ${f.head.slice(0, 100)}`);
+    }
+  }
+  if (!any) console.log('\nNo OpenCode directories found on this machine.');
+  console.log('\nShare this output so the correct log format can be added to agent.js\n');
 }
 
 // ── Ship to backend ───────────────────────────────────────────────────────────
@@ -368,4 +411,5 @@ async function main() {
   console.log(`Sent: received=${result.received}, newly stored=${result.stored}`);
 }
 
-main().catch(e => { console.error(String(e)); process.exit(1); });
+if (process.argv.includes('--scan')) { runScan(); }
+else { main().catch(e => { console.error(String(e)); process.exit(1); }); }
