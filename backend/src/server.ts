@@ -7,6 +7,7 @@ import { login, authorize } from './auth';
 import {
   ingestMany,
   summaryByCoder,
+  tokensByModel,
   interactionsForCoder,
   logAccess,
   pruneRetention,
@@ -101,6 +102,14 @@ const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Pro
       }
       logAccess(s.actor, 'report');
       return send(res, 200, { coders: summaryByCoder() });
+    }
+    if (req.method === 'GET' && p === '/api/tokens') {
+      const s = authorize(req);
+      if (!s) {
+        return send(res, 401, { error: 'auth required' });
+      }
+      logAccess(s.actor, 'tokens');
+      return send(res, 200, { rows: tokensByModel() });
     }
     const drill = /^\/api\/coder\/(.+)$/.exec(p);
     if (req.method === 'GET' && drill) {

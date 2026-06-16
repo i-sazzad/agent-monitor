@@ -61,6 +61,19 @@
         <p class="muted" style="font-size:12px">“Simple→Opus” = simple-class tasks that ran on the expensive Claude model (cost signal, descriptive). Click a row for the role-gated prompt drill-down (access is logged).</p>
       </div>
 
+      <div id="tokenCard" class="card hidden">
+        <h2 style="margin-top:0;font-size:15px">Token spend by model</h2>
+        <table id="tokenTable">
+          <thead><tr>
+            <th>Coder</th><th>Model</th><th class="right">Sessions</th>
+            <th class="right">Input tokens</th><th class="right">Output tokens</th>
+            <th class="right">Cache read</th><th class="right">Est. cost</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="muted" style="font-size:12px">Costs estimated using per-1M-token placeholder rates. Cache-read tokens billed at ~10% input rate.</p>
+      </div>
+
       <div id="drill" class="card hidden">
         <h2 style="margin-top:0;font-size:15px">Prompts — <span id="drillCoder"></span> <span class="pill">role-gated · access logged</span></h2>
         <div id="drillBody"></div>
@@ -69,8 +82,21 @@
   </main>
 
   <script>
-    // Rates mirror backend cost.ts (placeholders). Cost is shown for context only.
-    const RATES = { 'claude-opus-4-8':[15,75], 'claude-sonnet-4-6':[3,15], 'claude-haiku-4-5-20251001':[1,5], 'opencode':[0.3,0.9], 'default':[3,15] };
+    // Per-1M-token rates [input, output] — placeholders, update with real billing rates.
+    const RATES = {
+      'claude-opus-4-8':         [15,   75],
+      'claude-sonnet-4-6':       [ 3,   15],
+      'claude-haiku-4-5-20251001':[ 1,    5],
+      'opencode':                [ 0.3,  0.9],
+      'default':                 [ 3,   15],
+    };
+    function rateFor(model) { return RATES[model] || RATES['default']; }
+    function estCost(r) {
+      const [rIn, rOut] = rateFor(r.model ?? r.agent);
+      const cacheIn = (r.tokens_cache_read || 0) / 1e6 * rIn * 0.1;
+      return (r.tokens_in || 0) / 1e6 * rIn + (r.tokens_out || 0) / 1e6 * rOut + cacheIn;
+    }
+
     const $ = (s) => document.querySelector(s);
 
     async function api(path) {
@@ -84,26 +110,68 @@
     $('#loginBtn').onclick = async () => {
       const r = await fetch('/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ token: $('#token').value }), credentials:'same-origin' });
       if (!r.ok) { $('#loginErr').textContent = 'Invalid token.'; return; }
-      $('#loginErr').textContent = ''; $('#token').value=''; showApp(); loadReport();
+      $('#loginErr').textContent = ''; $('#token').value=''; showApp(); loadAll();
     };
     $('#logout').onclick = async () => { await fetch('/logout', { method:'POST', credentials:'same-origin' }); showLogin(); };
+
+    async function loadAll() { await Promise.all([loadReport(), loadTokens()]); }
 
     async function loadReport() {
       const data = await api('/api/report');
       const tb = $('#coders tbody'); tb.innerHTML = '';
       for (const c of data.coders) {
-        const cost = (c.tokens_in/1e6)*((RATES['default'])[0]) + (c.tokens_out/1e6)*((RATES['default'])[1]);
+        const cost = estCost({ model: 'default', tokens_in: c.tokens_in, tokens_out: c.tokens_out });
         const tr = document.createElement('tr');
         tr.className = 'clickable';
         tr.innerHTML = `<td>${c.coder}</td><td class="right">${c.sessions}</td>
           <td class="right">${c.claude}</td><td class="right">${c.opencode}</td>
-          <td class="right">${c.tokens_in.toLocaleString()} / ${c.tokens_out.toLocaleString()}</td>
+          <td class="right">${(c.tokens_in||0).toLocaleString()} / ${(c.tokens_out||0).toLocaleString()}</td>
           <td class="right">~$${cost.toFixed(2)}</td>
           <td class="right ${c.simple_on_opus>0?'warn':''}">${c.simple_on_opus}</td>
           <td class="muted">${(c.ips||[]).join(', ')||'—'}</td>`;
         tr.onclick = () => drill(c.coder);
         tb.appendChild(tr);
       }
+    }
+
+    async function loadTokens() {
+      const data = await api('/api/tokens');
+      const tb = $('#tokenTable tbody'); tb.innerHTML = '';
+      let prevCoder = null;
+      let coderTotal = { tokens_in:0, tokens_out:0, tokens_cache_read:0, cost:0, sessions:0 };
+      const flush = (coder) => {
+        if (!coder) return;
+        const tr = document.createElement('tr');
+        tr.style.cssText = 'font-weight:600;background:#1a1d25';
+        tr.innerHTML = `<td>${coder} <span class="muted" style="font-weight:400">total</span></td><td></td>
+          <td class="right">${coderTotal.sessions}</td>
+          <td class="right">${coderTotal.tokens_in.toLocaleString()}</td>
+          <td class="right">${coderTotal.tokens_out.toLocaleString()}</td>
+          <td class="right">${(coderTotal.tokens_cache_read||0).toLocaleString()}</td>
+          <td class="right">~$${coderTotal.cost.toFixed(2)}</td>`;
+        tb.appendChild(tr);
+        coderTotal = { tokens_in:0, tokens_out:0, tokens_cache_read:0, cost:0, sessions:0 };
+      };
+      for (const r of data.rows) {
+        if (r.coder !== prevCoder && prevCoder !== null) flush(prevCoder);
+        prevCoder = r.coder;
+        const cost = estCost(r);
+        coderTotal.tokens_in += (r.tokens_in||0);
+        coderTotal.tokens_out += (r.tokens_out||0);
+        coderTotal.tokens_cache_read += (r.tokens_cache_read||0);
+        coderTotal.cost += cost;
+        coderTotal.sessions += (r.sessions||0);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="muted">${r.coder}</td><td><span class="pill">${r.model}</span></td>
+          <td class="right">${r.sessions}</td>
+          <td class="right">${(r.tokens_in||0).toLocaleString()}</td>
+          <td class="right">${(r.tokens_out||0).toLocaleString()}</td>
+          <td class="right">${(r.tokens_cache_read||0).toLocaleString()}</td>
+          <td class="right">~$${cost.toFixed(2)}</td>`;
+        tb.appendChild(tr);
+      }
+      flush(prevCoder);
+      $('#tokenCard').classList.remove('hidden');
     }
 
     async function drill(coder) {
@@ -117,7 +185,7 @@
     }
 
     // Try existing session on load.
-    api('/api/report').then(() => { showApp(); loadReport(); }).catch(() => showLogin());
+    api('/api/report').then(() => { showApp(); loadAll(); }).catch(() => showLogin());
   </script>
 </body>
 </html>

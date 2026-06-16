@@ -114,6 +114,16 @@ export interface CoderSummary {
   ips: string[];
 }
 
+export interface TokensByModel {
+  coder: string;
+  model: string;
+  sessions: number;
+  tokens_in: number;
+  tokens_out: number;
+  tokens_cache_read: number;
+  tokens_cache_create: number;
+}
+
 export function summaryByCoder(): CoderSummary[] {
   const rows = db
     .prepare(
@@ -143,6 +153,24 @@ export function summaryByCoder(): CoderSummary[] {
     }
     return { ...r, ips: [...ips] } as CoderSummary;
   });
+}
+
+/** Per-coder per-model token breakdown — for the "who's spending what" view. */
+export function tokensByModel(): TokensByModel[] {
+  return db
+    .prepare(
+      `SELECT coder,
+              COALESCE(model, 'unknown') model,
+              COUNT(*) sessions,
+              SUM(tokens_in) tokens_in,
+              SUM(tokens_out) tokens_out,
+              SUM(tokens_cache_read) tokens_cache_read,
+              SUM(tokens_cache_create) tokens_cache_create
+       FROM interactions
+       GROUP BY coder, model
+       ORDER BY coder, tokens_in DESC`
+    )
+    .all() as TokensByModel[];
 }
 
 /** Per-coder prompt drill-down (§7 role-gated; caller must be admin). */
