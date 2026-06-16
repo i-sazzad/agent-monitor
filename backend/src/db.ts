@@ -52,12 +52,13 @@ export interface Filters {
 }
 
 function where(f: Filters, alias = ''): { sql: string; params: (string | number)[] } {
-  const col = alias ? `${alias}.received_at` : 'received_at';
+  // Filter by actual session timestamp (ts) when available, fall back to received_at.
+  const tsCol  = alias ? `COALESCE(${alias}.ts, ${alias}.received_at)` : 'COALESCE(ts, received_at)';
   const cdrCol = alias ? `${alias}.coder` : 'coder';
   const parts: string[] = [];
   const params: (string | number)[] = [];
-  if (f.from) { parts.push(`${col} >= ?`); params.push(f.from); }
-  if (f.to)   { parts.push(`${col} <= ?`); params.push(f.to + 'T23:59:59.999Z'); }
+  if (f.from) { parts.push(`${tsCol} >= ?`); params.push(f.from); }
+  if (f.to)   { parts.push(`${tsCol} <= ?`); params.push(f.to + 'T23:59:59.999Z'); }
   if (f.coders?.length) {
     parts.push(`${cdrCol} IN (${f.coders.map(() => '?').join(',')})`);
     params.push(...f.coders);
@@ -206,14 +207,14 @@ export interface DailyActivity {
 export function activityOverTime(f: Filters = {}): DailyActivity[] {
   const { sql, params } = where(f);
   return db.prepare(`
-    SELECT date(received_at) date,
+    SELECT date(COALESCE(ts, received_at)) date,
            COUNT(*) sessions,
            COUNT(DISTINCT coder) active_coders,
            SUM(COALESCE(tokens_in,0)) tokens_in,
            SUM(COALESCE(tokens_out,0)) tokens_out
     FROM interactions ${sql}
-    GROUP BY date(received_at)
-    ORDER BY date(received_at)
+    GROUP BY date(COALESCE(ts, received_at))
+    ORDER BY date(COALESCE(ts, received_at))
   `).all(...params) as DailyActivity[];
 }
 

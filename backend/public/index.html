@@ -263,14 +263,20 @@
 // ── Config ───────────────────────────────────────────────────────────────────
 const RATES = {
   'claude-opus-4-8':           [15,   75],
+  'claude-opus-4-7':           [15,   75],
+  'claude-fable-5':            [15,   75],
   'claude-sonnet-4-6':         [ 3,   15],
+  'claude-sonnet-4-5':         [ 3,   15],
   'claude-haiku-4-5-20251001': [ 1,    5],
   'opencode':                  [ 0.3,  0.9],
   'default':                   [ 3,   15],
 };
 const MODEL_CLR = {
   'claude-opus-4-8':           '#a78bfa',
+  'claude-opus-4-7':           '#c084fc',
+  'claude-fable-5':            '#f472b6',
   'claude-sonnet-4-6':         '#4f8ef7',
+  'claude-sonnet-4-5':         '#60a5fa',
   'claude-haiku-4-5-20251001': '#34d399',
   'opencode':                  '#fb923c',
   'unknown':                   '#5a6380',
@@ -370,7 +376,7 @@ async function initCoderList() {
 // Default date range: last 90 days
 function setDefaultDates() {
   const to   = new Date();
-  const from = new Date(Date.now() - 89 * 86400_000);
+  const from = new Date(Date.now() - 179 * 86400_000); // 6 months default
   $('#fTo').value   = to.toISOString().slice(0,10);
   $('#fFrom').value = from.toISOString().slice(0,10);
 }
