@@ -206,7 +206,9 @@ export function tokensByModel(f: Filters = {}): TokensByModel[] {
            SUM(COALESCE(tokens_cache_read,0)) tokens_cache_read,
            SUM(COALESCE(tokens_cache_create,0)) tokens_cache_create
     FROM interactions ${sql}
-    GROUP BY coder, agent, model ORDER BY coder, tokens_in DESC
+    GROUP BY coder, agent, model
+    HAVING model IS NOT NULL OR (tokens_in > 0 OR tokens_out > 0)
+    ORDER BY coder, tokens_in DESC
   `).all(...params) as TokensByModel[];
 }
 

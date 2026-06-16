@@ -57,14 +57,6 @@
     .pill-red{background:#200a0a;color:var(--red);}
     .pill-muted{background:#151a25;color:var(--muted);}
 
-    .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
-    .bar-lbl{font-size:10px;color:var(--muted);width:130px;flex-shrink:0;}
-    .bar-track{flex:1;height:8px;background:#1a2035;border-radius:999px;overflow:hidden;}
-    .bar-fill{height:100%;border-radius:999px;}
-    .bar-pct{font-size:10px;width:36px;text-align:right;flex-shrink:0;}
-    .bar-green{background:var(--green);}
-    .bar-orange{background:var(--orange);}
-    .bar-red{background:var(--red);}
 
     pre{white-space:pre-wrap;word-break:break-word;background:#070910;border:1px solid var(--border);border-radius:7px;padding:10px 12px;font-size:12px;font-family:ui-monospace,monospace;margin-top:4px;}
     .drill-item{padding:10px 0;border-bottom:1px solid var(--border);}
@@ -165,13 +157,6 @@
           <tbody id="fcTbody"></tbody>
         </table></div>
       </div>
-    </div>
-
-    <!-- LIMITS -->
-    <div class="card" id="limitsCard">
-      <div class="ch">⏱ Daily &amp; weekly limit consumption</div>
-      <div id="limitsBody"></div>
-      <p style="font-size:11px;color:var(--muted);margin-top:8px">% of account-wide session limit. Resets daily (midnight UTC) and weekly (Monday UTC).</p>
     </div>
 
     <!-- PROMPTS -->
@@ -323,21 +308,6 @@ function render() {
     ptb.appendChild(tr);
   }
 
-  // Limits
-  const lim = d.limits || {};
-  const L = lim.config || {claude:{daily:0,weekly:0},opencode:{daily:0,weekly:0}};
-  const u = lim.usage  || {};
-  const cD=L.claude.daily,cW=L.claude.weekly,oD=L.opencode.daily,oW=L.opencode.weekly;
-  if (!cD&&!cW&&!oD&&!oW) { $('#limitsCard').style.display='none'; }
-  else {
-    $('#limitsCard').style.display='';
-    $('#limitsBody').innerHTML =
-      bar('Claude today',      u.claude_today||0,   cD)+
-      bar('Claude this week',  u.claude_week||0,    cW)+
-      bar('OpenCode today',    u.opencode_today||0, oD)+
-      bar('OpenCode this week',u.opencode_week||0,  oW);
-  }
-
   // Prompts
   $('#promptCount').textContent = `(${interactions.length})`;
   if (!interactions.length) { $('#promptsBody').innerHTML='<p style="color:var(--muted)">No prompts in range.</p>'; return; }
@@ -360,17 +330,6 @@ function render() {
   }).join('');
 }
 
-function bar(label, count, limit) {
-  if (!limit) return `<div class="bar-row"><span class="bar-lbl">${label}</span><span style="font-size:10px;color:var(--muted)">—</span></div>`;
-  const pct=Math.min(100,Math.round(count/limit*100));
-  const cls=pct>=85?'bar-red':pct>=60?'bar-orange':'bar-green';
-  const clr=pct>=85?'var(--red)':pct>=60?'var(--orange)':'var(--green)';
-  return `<div class="bar-row">
-    <span class="bar-lbl">${label}</span>
-    <div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
-    <span class="bar-pct" style="color:${clr}">${pct}%</span>
-  </div>`;
-}
 
 function showFC(workspace, fcRows) {
   const ws = (workspace||'').toLowerCase().replace(/\\/g,'/');
