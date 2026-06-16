@@ -313,9 +313,11 @@ function render() {
     const tc=i.task_class||'unknown';
     const tcCls={simple:'pill-green',moderate:'pill-blue',critical:'pill-red'}[tc]||'pill-muted';
     const acct=i.agent_account_id?pill(esc(i.agent_account_id.length>24?i.agent_account_id.slice(0,22)+'…':i.agent_account_id),'pill-muted'):'';
+    const agLbl = i.agent==='claude_code' ? pill('Claude','pill-blue') : i.agent==='opencode' ? pill('OpenCode','pill-orange') : '';
     return `<div class="drill-item">
       <div class="drill-meta">
         <span>${fmtDate(i.ts)}</span>
+        ${agLbl}
         <span class="pill" style="background:#0e1525;color:${cl}">${esc(sm)}</span>
         ${pill(tc,tcCls)}
         ${i.git_branch?`<span>⎇ ${esc(i.git_branch)}</span>`:''}
