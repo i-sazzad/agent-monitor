@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Coder Detail — Agent Monitor</title>
-  <script src="/chart.min.js"></script>
+  <script src="/agent-monitor/chart.min.js"></script>
   <style>
     :root{
       --bg:#0b0d12;--surface:#111520;--surface2:#161b27;--border:#1e2535;
@@ -80,7 +80,7 @@
 <body>
 
 <header>
-  <a href="/" class="back">← Dashboard</a>
+  <a href="/agent-monitor/" class="back">← Dashboard</a>
   <h1 id="hdrName" style="color:var(--accent)"></h1>
   <span style="font-size:11px;color:var(--muted)" id="hdrAcct"></span>
   <div class="hright">
@@ -173,7 +173,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const CODER = new URLSearchParams(location.search).get('coder') || '';
-if (!CODER) { document.title = 'Agent Monitor'; location.href = '/'; }
+if (!CODER) { document.title = 'Agent Monitor'; location.href = '/agent-monitor/'; }
 document.title = `${CODER} — Agent Monitor`;
 $('#hdrName').textContent = CODER;
 const fmt = n => n == null ? '0' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(0)+'k' : String(n);
@@ -209,7 +209,7 @@ function showDetail() { $('#loginWrap').classList.add('hidden'); $('#detail').cl
 
 async function doLogin() {
   $('#loginErr').textContent = '';
-  const r = await fetch('/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ token: $('#tokenInput').value }), credentials:'same-origin' });
+  const r = await fetch('/agent-monitor/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ token: $('#tokenInput').value }), credentials:'same-origin' });
   if (!r.ok) { $('#loginErr').textContent = 'Invalid token.'; return; }
   $('#tokenInput').value = '';
   showDetail(); load();
@@ -219,7 +219,7 @@ let _data = null;
 
 async function load() {
   const qs = buildQS();
-  _data = await apiFetch('/api/coder/' + encodeURIComponent(CODER) + qs);
+  _data = await apiFetch('/agent-monitor/api/coder/' + encodeURIComponent(CODER) + qs);
   render();
   $('#lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
@@ -368,7 +368,7 @@ resetDates();
   if (f) $('#fFrom').value = localDateStr(new Date(f));
   if (t) $('#fTo').value   = localDateStr(new Date(t));
 })();
-apiFetch('/api/coder/' + encodeURIComponent(CODER) + buildQS()).then(data => {
+apiFetch('/agent-monitor/api/coder/' + encodeURIComponent(CODER) + buildQS()).then(data => {
   _data = data; showDetail(); render();
   $('#lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }).catch(() => showLogin());

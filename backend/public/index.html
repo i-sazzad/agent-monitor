@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Agent Monitor</title>
-  <script src="/chart.min.js"></script>
+  <script src="/agent-monitor/chart.min.js"></script>
   <style>
     :root{
       --bg:#0b0d12;--surface:#111520;--surface2:#161b27;--border:#1e2535;
@@ -317,7 +317,7 @@ function showApp() {
 }
 async function doLogin() {
   $('#loginErr').textContent = '';
-  const r = await fetch('/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ token: $('#tokenInput').value }), credentials:'same-origin' });
+  const r = await fetch('/agent-monitor/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ token: $('#tokenInput').value }), credentials:'same-origin' });
   if (!r.ok) { $('#loginErr').textContent = 'Invalid token.'; return; }
   $('#tokenInput').value = '';
   showApp();
@@ -325,7 +325,7 @@ async function doLogin() {
   applyFilters();
 }
 async function doLogout() {
-  await fetch('/logout', { method:'POST', credentials:'same-origin' });
+  await fetch('/agent-monitor/logout', { method:'POST', credentials:'same-origin' });
   showLogin();
 }
 
@@ -351,7 +351,7 @@ function updateCoderLabel() {
 }
 
 async function initCoderList() {
-  const d = await apiFetch('/api/coders');
+  const d = await apiFetch('/agent-monitor/api/coders');
   _coders = d.coders || [];
   const box = $('#coderChecks');
   box.innerHTML = '';
@@ -414,10 +414,10 @@ async function applyFilters() {
   renderTags();
   const qs = buildQS();
   [_report, _tokens, _activity, _complexity] = await Promise.all([
-    apiFetch('/api/report'     + qs),
-    apiFetch('/api/tokens'     + qs),
-    apiFetch('/api/activity'   + qs),
-    apiFetch('/api/complexity' + qs),
+    apiFetch('/agent-monitor/api/report'     + qs),
+    apiFetch('/agent-monitor/api/tokens'     + qs),
+    apiFetch('/agent-monitor/api/activity'   + qs),
+    apiFetch('/agent-monitor/api/complexity' + qs),
   ]);
   renderKPIs();
   try { renderTimeline(); } catch(e) { console.error('timeline', e); }
@@ -538,7 +538,7 @@ function renderCoderTable() {
       p.set('coder', c.coder);
       if ($('#fFrom').value) p.set('from', new Date($('#fFrom').value+'T00:00:00').toISOString());
       if ($('#fTo').value)   p.set('to',   new Date($('#fTo').value+'T23:59:59.999').toISOString());
-      window.open('/coder.html?' + p.toString(), '_blank');
+      window.open('/agent-monitor/coder.html?' + p.toString(), '_blank');
     };
     tb.appendChild(tr);
   }
@@ -547,7 +547,7 @@ function renderCoderTable() {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 setDefaultDates();
-apiFetch('/api/report').then(async () => {
+apiFetch('/agent-monitor/api/report').then(async () => {
   showApp();
   await initCoderList();
   applyFilters();

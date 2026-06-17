@@ -55,10 +55,15 @@ function parseFilters(url: URL): Filters {
   return { from, to, coders: coders ? coders.split(',').filter(Boolean) : undefined };
 }
 
+const PREFIX = '/agent-monitor';
+
 const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
   try {
     const url = new URL(req.url ?? '/', `http://localhost`);
-    const p = url.pathname;
+    let p = url.pathname;
+    if (p === PREFIX) { res.writeHead(301, { Location: PREFIX + '/' }); res.end(); return; }
+    if (!p.startsWith(PREFIX + '/')) return send(res, 404, { error: 'not found' });
+    p = p.slice(PREFIX.length);
 
     // ── ingestion ──────────────────────────────────────────────────────────
     if (req.method === 'POST' && p === '/ingest') {
@@ -74,12 +79,12 @@ const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Pro
       const body = JSON.parse((await readBody(req)) || '{}');
       const sid = login(String(body.token ?? ''));
       if (!sid) return send(res, 401, { error: 'invalid credentials' });
-      res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': `sid=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800` });
+      res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': `sid=${sid}; HttpOnly; SameSite=Strict; Path=${PREFIX}; Max-Age=28800` });
       res.end(JSON.stringify({ ok: true }));
       return;
     }
     if (req.method === 'POST' && p === '/logout') {
-      res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'sid=; HttpOnly; Path=/; Max-Age=0' });
+      res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': `sid=; HttpOnly; Path=${PREFIX}; Max-Age=0` });
       res.end(JSON.stringify({ ok: true }));
       return;
     }
