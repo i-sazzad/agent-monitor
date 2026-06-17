@@ -16,6 +16,15 @@ services:
       - RETENTION_DAYS=${RETENTION_DAYS:-90}
     env_file:
       - .env
+    networks:
+      - smart_network
 
 volumes:
   agent-monitor-data:
+
+networks:
+  smart_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.37.0.0/16
