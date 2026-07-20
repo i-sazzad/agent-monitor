@@ -54,6 +54,18 @@ db.exec(`
     coder TEXT PRIMARY KEY,
     team_id INTEGER NOT NULL REFERENCES teams(id)
   );
+  CREATE TABLE IF NOT EXISTS file_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    interaction_id TEXT NOT NULL,
+    coder TEXT NOT NULL,
+    agent TEXT,
+    workspace TEXT,
+    file TEXT NOT NULL,
+    action TEXT NOT NULL,
+    ts TEXT,
+    UNIQUE(interaction_id, file, action)
+  );
+  CREATE INDEX IF NOT EXISTS idx_fe_coder ON file_events(coder);
 `);
 
 try { db.exec('ALTER TABLE interactions ADD COLUMN agent_account_id TEXT'); } catch { /* exists */ }
@@ -105,6 +117,7 @@ export interface IngestRow {
   modelConfidence: string;
   agentAccountId?: string | null;
   gitChanges?: GitChange[] | null;
+  fileEvents?: { file: string; action: string }[] | null;
 }
 
 const insert = db.prepare(`
@@ -115,6 +128,11 @@ const insert = db.prepare(`
   VALUES (@interaction_id,@coder,@team,@ips,@agent,@model,@prompt,@task_class,@task_confidence,
    @workspace,@git_branch,@session_id,@ts,@received_at,
    @tokens_in,@tokens_out,@tokens_cache_read,@tokens_cache_create,@model_confidence,@agent_account_id,@git_changes)
+`);
+
+const insertFileEvent = db.prepare(`
+  INSERT OR IGNORE INTO file_events (interaction_id, coder, agent, workspace, file, action, ts)
+  VALUES (?,?,?,?,?,?,?)
 `);
 
 export function ingestMany(rows: IngestRow[]): number {
@@ -146,6 +164,15 @@ export function ingestMany(rows: IngestRow[]): number {
         git_changes: r.gitChanges?.length ? JSON.stringify(r.gitChanges) : null,
       });
       n += info.changes;
+      // Not gated on info.changes: agents re-send full history every run (until
+      // Phase 2 incremental capture), so pre-upgrade interactions already exist
+      // (info.changes === 0). Running unconditionally lets upgraded agents
+      // backfill file events; UNIQUE + INSERT OR IGNORE prevents double-counts.
+      if (r.fileEvents?.length) {
+        for (const ev of r.fileEvents) {
+          insertFileEvent.run(r.interactionId, r.coder, r.agent, r.workspace, ev.file, ev.action, r.timestamp);
+        }
+      }
     }
     return n;
   });
@@ -427,7 +454,43 @@ export function logAccess(actor: string, action: string, detail = ''): void {
 
 export function pruneRetention(): number {
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 86400_000).toISOString();
-  return db.prepare('DELETE FROM interactions WHERE received_at < ?').run(cutoff).changes;
+  const n = db.prepare('DELETE FROM interactions WHERE received_at < ?').run(cutoff).changes;
+  db.prepare('DELETE FROM file_events WHERE interaction_id NOT IN (SELECT interaction_id FROM interactions)').run();
+  return n;
+}
+
+// ── file events (authoritative per-turn file activity from tool calls) ────────
+
+export interface FileEventSummary {
+  workspace: string | null;
+  file: string;
+  agent: string;
+  reads: number;
+  edits: number;
+  writes: number;
+  last_ts: string | null;
+}
+
+export function fileEventSummary(f: Filters = {}): FileEventSummary[] {
+  const parts: string[] = [];
+  const params: (string | number)[] = [];
+  if (f.from) { parts.push('ts >= ?'); params.push(f.from); }
+  if (f.to)   { parts.push('ts <= ?'); params.push(f.to); }
+  if (f.coders?.length) {
+    parts.push(`coder IN (${f.coders.map(() => '?').join(',')})`);
+    params.push(...f.coders);
+  }
+  const sql = parts.length ? 'WHERE ' + parts.join(' AND ') : '';
+  return db.prepare(`
+    SELECT workspace, file, COALESCE(agent,'unknown') agent,
+           SUM(action='read')  reads,
+           SUM(action='edit')  edits,
+           SUM(action='write') writes,
+           MAX(ts) last_ts
+    FROM file_events ${sql}
+    GROUP BY workspace, file, agent
+    ORDER BY edits + writes DESC, reads DESC
+  `).all(...params) as FileEventSummary[];
 }
 
 // ── users / teams / roles (managed via direct DB edits or scripts/manage.js) ──

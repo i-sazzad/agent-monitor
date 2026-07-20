@@ -15,6 +15,7 @@ import {
   coderLimitUsage,
   projectSummary,
   fileChangesByProject,
+  fileEventSummary,
   coderDailyActivity,
   allCoders,
   interactionsForCoder,
@@ -122,6 +123,9 @@ const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Pro
       if (p === '/api/file-changes') {
         return send(res, 200, { rows: f ? fileChangesByProject(f) : [] });
       }
+      if (p === '/api/file-events') {
+        return send(res, 200, { rows: f ? fileEventSummary(f) : [] });
+      }
       const drill = /^\/api\/coder\/(.+)$/.exec(p);
       if (drill) {
         const coder = decodeURIComponent(drill[1]);
@@ -138,6 +142,7 @@ const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Pro
           daily: coderDailyActivity(coder, f0),
           projects: projectSummary(coderFilter),
           fileChanges: fileChangesByProject(coderFilter),
+          fileEvents: fileEventSummary({ ...f0, coders: [coder] }),
           limits: { config: LIMITS, usage: allUsage.find((u) => u.coder === coder) ?? null },
         });
       }
