@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { RETENTION_DAYS } from './config';
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.MONITOR_DATA_DIR ?? path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'monitor.db'));
