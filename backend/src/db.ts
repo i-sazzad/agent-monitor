@@ -66,6 +66,14 @@ db.exec(`
     UNIQUE(interaction_id, file, action)
   );
   CREATE INDEX IF NOT EXISTS idx_fe_coder ON file_events(coder);
+  CREATE TABLE IF NOT EXISTS heartbeats (
+    coder TEXT PRIMARY KEY,
+    team TEXT,
+    version TEXT,
+    hostname TEXT,
+    last_seen TEXT NOT NULL,
+    prompts INTEGER
+  );
 `);
 
 try { db.exec('ALTER TABLE interactions ADD COLUMN agent_account_id TEXT'); } catch { /* exists */ }
@@ -533,4 +541,30 @@ export function assignCoder(coder: string, teamId: number): void {
 export function codersForTeam(teamId: number): string[] {
   return (db.prepare('SELECT coder FROM coder_teams WHERE team_id = ?').all(teamId) as { coder: string }[])
     .map((r) => r.coder);
+}
+
+// ── agent heartbeats (fleet health) ───────────────────────────────────────────
+
+export interface FleetRow {
+  coder: string;
+  team: string | null;
+  version: string | null;
+  hostname: string | null;
+  last_seen: string;
+  prompts: number;
+}
+
+export function recordHeartbeat(h: Omit<FleetRow, 'last_seen'>): void {
+  db.prepare(`
+    INSERT INTO heartbeats (coder, team, version, hostname, last_seen, prompts)
+    VALUES (@coder, @team, @version, @hostname, @last_seen, @prompts)
+    ON CONFLICT(coder) DO UPDATE SET
+      team = excluded.team, version = excluded.version,
+      hostname = excluded.hostname, last_seen = excluded.last_seen,
+      prompts = excluded.prompts
+  `).run({ ...h, last_seen: new Date().toISOString() });
+}
+
+export function fleet(): FleetRow[] {
+  return db.prepare('SELECT * FROM heartbeats ORDER BY last_seen DESC').all() as FleetRow[];
 }

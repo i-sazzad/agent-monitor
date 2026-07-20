@@ -34,6 +34,7 @@ const CODER        = process.env.CODER_NAME  || (() => {
 const CLAUDE_EMAIL   = process.env.CLAUDE_ACCOUNT_EMAIL   || '';
 const OPENCODE_EMAIL = process.env.OPENCODE_ACCOUNT_EMAIL || '';
 const TEAM = process.env.TEAM_NAME || null;
+const AGENT_VERSION = '1.1.0';
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 const sha1 = s => crypto.createHash('sha1').update(s).digest('hex');
@@ -674,6 +675,12 @@ async function main() {
     process.exit(1);
   }
   console.log(`Sent: received=${result.received}, newly stored=${result.stored}`);
+  try {
+    await post(INGEST_URL + '/heartbeat', INGEST_TOKEN, JSON.stringify({
+      coder: CODER, team: TEAM, version: AGENT_VERSION,
+      hostname: os.hostname(), prompts: records.length,
+    }));
+  } catch { /* heartbeat is best-effort */ }
 }
 
 if (require.main === module) {

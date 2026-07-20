@@ -16,6 +16,8 @@ import {
   projectSummary,
   fileChangesByProject,
   fileEventSummary,
+  recordHeartbeat,
+  fleet,
   coderDailyActivity,
   allCoders,
   interactionsForCoder,
@@ -72,6 +74,21 @@ const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Pro
       return send(res, 200, { received: records.length, stored: ingestMany(records) });
     }
 
+    if (req.method === 'POST' && p === '/heartbeat') {
+      const m = /^Bearer\s+(.+)$/.exec(req.headers.authorization ?? '');
+      if (!m || m[1] !== INGEST_TOKEN) return send(res, 401, { error: 'bad ingest token' });
+      const b = JSON.parse((await readBody(req)) || '{}');
+      if (!b.coder) return send(res, 400, { error: 'coder required' });
+      recordHeartbeat({
+        coder: String(b.coder),
+        team: b.team != null ? String(b.team) : null,
+        version: b.version != null ? String(b.version) : null,
+        hostname: b.hostname != null ? String(b.hostname) : null,
+        prompts: Number(b.prompts ?? 0),
+      });
+      return send(res, 200, { ok: true });
+    }
+
     // ── auth ───────────────────────────────────────────────────────────────
     if (req.method === 'POST' && p === '/login') {
       const body = JSON.parse((await readBody(req)) || '{}');
@@ -125,6 +142,12 @@ const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Pro
       }
       if (p === '/api/file-events') {
         return send(res, 200, { rows: f ? fileEventSummary(f) : [] });
+      }
+      if (p === '/api/fleet') {
+        const rows = fleet();
+        if (s.role === 'super_admin') return send(res, 200, { rows });
+        const vis = new Set(visibleCoders(s, rows.map((r) => r.coder)));
+        return send(res, 200, { rows: rows.filter((r) => vis.has(r.coder)) });
       }
       const drill = /^\/api\/coder\/(.+)$/.exec(p);
       if (drill) {
