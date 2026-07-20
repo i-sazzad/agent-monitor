@@ -33,6 +33,7 @@ const CODER        = process.env.CODER_NAME  || (() => {
 })();
 const CLAUDE_EMAIL   = process.env.CLAUDE_ACCOUNT_EMAIL   || '';
 const OPENCODE_EMAIL = process.env.OPENCODE_ACCOUNT_EMAIL || '';
+const TEAM = process.env.TEAM_NAME || null;
 
 if (!INGEST_URL || !INGEST_TOKEN) {
   console.error('ERROR: Set INGEST_URL and INGEST_TOKEN in .env (see agent.env.example)');
@@ -597,6 +598,7 @@ async function main() {
     return {
       interactionId:   sha1(seed).slice(0, 16),
       coder:           CODER,
+      team:            TEAM,
       ips,
       agentAccountId:  raw.agent === 'claude_code' ? claudeAcct : opencodeAcct,
       agent:           raw.agent,

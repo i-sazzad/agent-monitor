@@ -43,6 +43,7 @@ db.exec(`
 
 try { db.exec('ALTER TABLE interactions ADD COLUMN agent_account_id TEXT'); } catch { /* exists */ }
 try { db.exec('ALTER TABLE interactions ADD COLUMN git_changes TEXT'); } catch { /* exists */ }
+try { db.exec('ALTER TABLE interactions ADD COLUMN team TEXT'); } catch { /* exists */ }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ export interface GitChange { file: string; added: number; removed: number; }
 export interface IngestRow {
   interactionId: string;
   coder: string;
+  team?: string | null;
   ips: string[];
   agent: string;
   model: string | null;
@@ -92,10 +94,10 @@ export interface IngestRow {
 
 const insert = db.prepare(`
   INSERT OR IGNORE INTO interactions
-  (interaction_id, coder, ips, agent, model, prompt, task_class, task_confidence,
+  (interaction_id, coder, team, ips, agent, model, prompt, task_class, task_confidence,
    workspace, git_branch, session_id, ts, received_at,
    tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model_confidence, agent_account_id, git_changes)
-  VALUES (@interaction_id,@coder,@ips,@agent,@model,@prompt,@task_class,@task_confidence,
+  VALUES (@interaction_id,@coder,@team,@ips,@agent,@model,@prompt,@task_class,@task_confidence,
    @workspace,@git_branch,@session_id,@ts,@received_at,
    @tokens_in,@tokens_out,@tokens_cache_read,@tokens_cache_create,@model_confidence,@agent_account_id,@git_changes)
 `);
@@ -108,6 +110,7 @@ export function ingestMany(rows: IngestRow[]): number {
       const info = insert.run({
         interaction_id: r.interactionId,
         coder: r.coder,
+        team: r.team ?? null,
         ips: JSON.stringify(r.ips ?? []),
         agent: r.agent,
         model: r.model,
@@ -138,6 +141,7 @@ export function ingestMany(rows: IngestRow[]): number {
 
 export interface CoderSummary {
   coder: string;
+  team: string | null;
   sessions: number;
   prompts: number;
   claude: number;
@@ -154,6 +158,7 @@ export function summaryByCoder(f: Filters = {}): CoderSummary[] {
   const { sql, params } = where(f);
   const rows = db.prepare(`
     SELECT coder,
+           MAX(team) team,
            COUNT(DISTINCT COALESCE(session_id, interaction_id)) sessions,
            COUNT(*) prompts,
            SUM(agent='claude_code') claude,
