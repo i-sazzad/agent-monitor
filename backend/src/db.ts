@@ -39,6 +39,21 @@ db.exec(`
     action TEXT,
     detail TEXT
   );
+  CREATE TABLE IF NOT EXISTS teams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('super_admin','team_lead')),
+    team_id INTEGER REFERENCES teams(id)
+  );
+  CREATE TABLE IF NOT EXISTS coder_teams (
+    coder TEXT PRIMARY KEY,
+    team_id INTEGER NOT NULL REFERENCES teams(id)
+  );
 `);
 
 try { db.exec('ALTER TABLE interactions ADD COLUMN agent_account_id TEXT'); } catch { /* exists */ }
@@ -413,4 +428,46 @@ export function logAccess(actor: string, action: string, detail = ''): void {
 export function pruneRetention(): number {
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 86400_000).toISOString();
   return db.prepare('DELETE FROM interactions WHERE received_at < ?').run(cutoff).changes;
+}
+
+// ── users / teams / roles (managed via direct DB edits or scripts/manage.js) ──
+
+export interface UserRow {
+  id: number;
+  name: string;
+  role: 'super_admin' | 'team_lead';
+  team_id: number | null;
+}
+
+export function findUserByTokenHash(hash: string): UserRow | null {
+  const r = db.prepare('SELECT id, name, role, team_id FROM users WHERE token_hash = ?')
+    .get(hash) as UserRow | undefined;
+  return r ?? null;
+}
+
+export function upsertTeam(name: string): number {
+  db.prepare('INSERT OR IGNORE INTO teams (name) VALUES (?)').run(name);
+  return (db.prepare('SELECT id FROM teams WHERE name = ?').get(name) as { id: number }).id;
+}
+
+export function addUser(
+  name: string,
+  role: 'super_admin' | 'team_lead',
+  tokenHash: string,
+  teamId: number | null,
+): void {
+  db.prepare('INSERT INTO users (name, role, token_hash, team_id) VALUES (?,?,?,?)')
+    .run(name, role, tokenHash, teamId);
+}
+
+export function assignCoder(coder: string, teamId: number): void {
+  db.prepare(
+    'INSERT INTO coder_teams (coder, team_id) VALUES (?,?) ' +
+    'ON CONFLICT(coder) DO UPDATE SET team_id = excluded.team_id'
+  ).run(coder, teamId);
+}
+
+export function codersForTeam(teamId: number): string[] {
+  return (db.prepare('SELECT coder FROM coder_teams WHERE team_id = ?').all(teamId) as { coder: string }[])
+    .map((r) => r.coder);
 }
