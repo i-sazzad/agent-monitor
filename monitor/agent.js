@@ -33,11 +33,8 @@ const CODER        = process.env.CODER_NAME  || (() => {
 })();
 const CLAUDE_EMAIL   = process.env.CLAUDE_ACCOUNT_EMAIL   || '';
 const OPENCODE_EMAIL = process.env.OPENCODE_ACCOUNT_EMAIL || '';
-
-if (!INGEST_URL || !INGEST_TOKEN) {
-  console.error('ERROR: Set INGEST_URL and INGEST_TOKEN in .env (see agent.env.example)');
-  process.exit(1);
-}
+const TEAM = process.env.TEAM_NAME || null;
+const AGENT_VERSION = '1.1.0';
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 const sha1 = s => crypto.createHash('sha1').update(s).digest('hex');
@@ -90,6 +87,29 @@ function classify(prompt) {
   if (c > s) return { taskClass: 'critical', confidence: Math.min(0.5 + 0.2 * (c - s), 0.95) };
   if (s > c) return { taskClass: 'simple',   confidence: Math.min(0.5 + 0.2 * (s - c), 0.95) };
   return { taskClass: 'moderate', confidence: 0.3 };
+}
+
+// ── File-event extraction (authoritative: from agent tool calls) ─────────────
+const TOOL_ACTIONS = { Write: 'write', Edit: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit', Read: 'read' };
+
+function toolFileEvent(name, input) {
+  const action = TOOL_ACTIONS[name];
+  if (!action || !input) return null;
+  const file = input.file_path || input.notebook_path || input.path;
+  if (!file) return null;
+  return { file: String(file), action };
+}
+
+function opencodeToolEvent(pData) {
+  if (!pData || pData.type !== 'tool') return null;
+  const tool = String(pData.tool || pData.name || '').toLowerCase();
+  const input = (pData.state && pData.state.input) || pData.input || {};
+  const file = input.filePath || input.file_path || input.path;
+  if (!file) return null;
+  if (tool.includes('write')) return { file: String(file), action: 'write' };
+  if (tool.includes('edit'))  return { file: String(file), action: 'edit' };
+  if (tool.includes('read'))  return { file: String(file), action: 'read' };
+  return null;
 }
 
 // ── Secret redaction ──────────────────────────────────────────────────────────
@@ -181,6 +201,8 @@ function parseClaude(file) {
 
     const tokens = emptyTok();
     let model = null;
+    const fileEvents = [];
+    const seenEv = new Set();
     for (let j = i + 1; j < parsed.length; j++) {
       const nxt = parsed[j];
       if (nxt.type === 'user') break;
@@ -192,8 +214,18 @@ function parseClaude(file) {
       tokens.output      += u.output_tokens                  || 0;
       tokens.cacheRead   += u.cache_read_input_tokens        || 0;
       tokens.cacheCreate += u.cache_creation_input_tokens    || 0;
+      if (Array.isArray(nm.content)) {
+        for (const b of nm.content) {
+          if (!b || b.type !== 'tool_use') continue;
+          const ev = toolFileEvent(b.name, b.input);
+          if (ev && !seenEv.has(ev.action + '|' + ev.file)) {
+            seenEv.add(ev.action + '|' + ev.file);
+            fileEvents.push(ev);
+          }
+        }
+      }
     }
-    results.push({ agent: 'claude_code', model, prompt: p, workspace, gitBranch, sessionId, timestamp: o.timestamp || null, tokens, modelConfidence: 'authoritative' });
+    results.push({ agent: 'claude_code', model, prompt: p, workspace, gitBranch, sessionId, timestamp: o.timestamp || null, tokens, fileEvents, modelConfidence: 'authoritative' });
   }
   return results;
 }
@@ -385,6 +417,22 @@ function readOpencodeDB(dbPath) {
     partsByMsg[p.message_id].push(p);
   }
 
+  // Map message id → session id, then collect file events per session
+  const msgSession = {};
+  for (const m of (data.message || [])) {
+    if (m.id) msgSession[m.id] = m.session_id || null;
+  }
+  const sesFileEvents = {};
+  for (const p of (data.part || [])) {
+    const ev = opencodeToolEvent(parseJSON(p.data));
+    if (!ev) continue;
+    const sid = msgSession[p.message_id];
+    if (!sid) continue;
+    if (!sesFileEvents[sid]) sesFileEvents[sid] = [];
+    const key = ev.action + '|' + ev.file;
+    if (!sesFileEvents[sid].some(e => e.action + '|' + e.file === key)) sesFileEvents[sid].push(ev);
+  }
+
   // Track how many user messages per session (to avoid double-counting session tokens)
   const sesMsgCount = {};
   for (const m of (data.message || [])) {
@@ -423,8 +471,10 @@ function readOpencodeDB(dbPath) {
 
     // Token counts are stored at session level — assign to first message of each session
     let tokIn = 0, tokOut = 0, tokCR = 0, tokCW = 0;
+    let fileEvents = [];
     if (sesId && !sesFirstSeen.has(sesId)) {
       sesFirstSeen.add(sesId);
+      fileEvents = sesFileEvents[sesId] || [];
       tokIn  = Number(ses.tokens_input        || 0);
       tokOut = Number(ses.tokens_output       || 0);
       tokCR  = Number(ses.tokens_cache_read   || 0);
@@ -443,6 +493,7 @@ function readOpencodeDB(dbPath) {
       sessionId: sesId || sha1(m.id || prompt).slice(0, 16),
       timestamp: ts,
       tokens: { input: tokIn, output: tokOut, cacheRead: tokCR, cacheCreate: tokCW },
+      fileEvents,
       modelConfidence: 'authoritative',
     });
   }
@@ -597,6 +648,7 @@ async function main() {
     return {
       interactionId:   sha1(seed).slice(0, 16),
       coder:           CODER,
+      team:            TEAM,
       ips,
       agentAccountId:  raw.agent === 'claude_code' ? claudeAcct : opencodeAcct,
       agent:           raw.agent,
@@ -611,6 +663,7 @@ async function main() {
       tokens:          raw.tokens,
       modelConfidence: raw.modelConfidence,
       gitChanges:      raw.workspace ? gitDiffStat(raw.workspace) : [],
+      fileEvents:      raw.fileEvents || [],
     };
   });
 
@@ -622,16 +675,32 @@ async function main() {
     process.exit(1);
   }
   console.log(`Sent: received=${result.received}, newly stored=${result.stored}`);
+  try {
+    await post(INGEST_URL + '/heartbeat', INGEST_TOKEN, JSON.stringify({
+      coder: CODER, team: TEAM, version: AGENT_VERSION,
+      hostname: os.hostname(), prompts: records.length,
+    }));
+  } catch { /* heartbeat is best-effort */ }
 }
 
-if (process.argv.includes('--scan')) { runScan(); }
-else if (process.argv.includes('--debug-opencode')) {
-  const roots = opencodeRoots();
-  let found = false;
-  for (const r of roots) {
-    const dbPath = path.join(r, 'opencode.db');
-    if (fs.existsSync(dbPath)) { debugOpencodeDB(dbPath); found = true; break; }
+if (require.main === module) {
+  if (process.argv.includes('--scan')) { runScan(); }
+  else if (process.argv.includes('--debug-opencode')) {
+    const roots = opencodeRoots();
+    let found = false;
+    for (const r of roots) {
+      const dbPath = path.join(r, 'opencode.db');
+      if (fs.existsSync(dbPath)) { debugOpencodeDB(dbPath); found = true; break; }
+    }
+    if (!found) console.log('opencode.db not found. Run --scan to see all directories checked.');
   }
-  if (!found) console.log('opencode.db not found. Run --scan to see all directories checked.');
+  else {
+    if (!INGEST_URL || !INGEST_TOKEN) {
+      console.error('ERROR: Set INGEST_URL and INGEST_TOKEN in .env (see env.example)');
+      process.exit(1);
+    }
+    main().catch(e => { console.error(String(e)); process.exit(1); });
+  }
 }
-else { main().catch(e => { console.error(String(e)); process.exit(1); }); }
+
+module.exports = { classify, redact, parseClaude, toolFileEvent, opencodeToolEvent };
