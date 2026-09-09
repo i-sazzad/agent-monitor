@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { RETENTION_DAYS } from './config';
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.MONITOR_DATA_DIR ?? path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'monitor.db'));
@@ -39,10 +39,46 @@ db.exec(`
     action TEXT,
     detail TEXT
   );
+  CREATE TABLE IF NOT EXISTS teams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('super_admin','team_lead')),
+    team_id INTEGER REFERENCES teams(id)
+  );
+  CREATE TABLE IF NOT EXISTS coder_teams (
+    coder TEXT PRIMARY KEY,
+    team_id INTEGER NOT NULL REFERENCES teams(id)
+  );
+  CREATE TABLE IF NOT EXISTS file_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    interaction_id TEXT NOT NULL,
+    coder TEXT NOT NULL,
+    agent TEXT,
+    workspace TEXT,
+    file TEXT NOT NULL,
+    action TEXT NOT NULL,
+    ts TEXT,
+    UNIQUE(interaction_id, file, action)
+  );
+  CREATE INDEX IF NOT EXISTS idx_fe_coder ON file_events(coder);
+  CREATE TABLE IF NOT EXISTS heartbeats (
+    coder TEXT PRIMARY KEY,
+    team TEXT,
+    version TEXT,
+    hostname TEXT,
+    last_seen TEXT NOT NULL,
+    prompts INTEGER
+  );
 `);
 
 try { db.exec('ALTER TABLE interactions ADD COLUMN agent_account_id TEXT'); } catch { /* exists */ }
 try { db.exec('ALTER TABLE interactions ADD COLUMN git_changes TEXT'); } catch { /* exists */ }
+try { db.exec('ALTER TABLE interactions ADD COLUMN team TEXT'); } catch { /* exists */ }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +110,7 @@ export interface GitChange { file: string; added: number; removed: number; }
 export interface IngestRow {
   interactionId: string;
   coder: string;
+  team?: string | null;
   ips: string[];
   agent: string;
   model: string | null;
@@ -88,16 +125,22 @@ export interface IngestRow {
   modelConfidence: string;
   agentAccountId?: string | null;
   gitChanges?: GitChange[] | null;
+  fileEvents?: { file: string; action: string }[] | null;
 }
 
 const insert = db.prepare(`
   INSERT OR IGNORE INTO interactions
-  (interaction_id, coder, ips, agent, model, prompt, task_class, task_confidence,
+  (interaction_id, coder, team, ips, agent, model, prompt, task_class, task_confidence,
    workspace, git_branch, session_id, ts, received_at,
    tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model_confidence, agent_account_id, git_changes)
-  VALUES (@interaction_id,@coder,@ips,@agent,@model,@prompt,@task_class,@task_confidence,
+  VALUES (@interaction_id,@coder,@team,@ips,@agent,@model,@prompt,@task_class,@task_confidence,
    @workspace,@git_branch,@session_id,@ts,@received_at,
    @tokens_in,@tokens_out,@tokens_cache_read,@tokens_cache_create,@model_confidence,@agent_account_id,@git_changes)
+`);
+
+const insertFileEvent = db.prepare(`
+  INSERT OR IGNORE INTO file_events (interaction_id, coder, agent, workspace, file, action, ts)
+  VALUES (?,?,?,?,?,?,?)
 `);
 
 export function ingestMany(rows: IngestRow[]): number {
@@ -108,6 +151,7 @@ export function ingestMany(rows: IngestRow[]): number {
       const info = insert.run({
         interaction_id: r.interactionId,
         coder: r.coder,
+        team: r.team ?? null,
         ips: JSON.stringify(r.ips ?? []),
         agent: r.agent,
         model: r.model,
@@ -128,6 +172,15 @@ export function ingestMany(rows: IngestRow[]): number {
         git_changes: r.gitChanges?.length ? JSON.stringify(r.gitChanges) : null,
       });
       n += info.changes;
+      // Not gated on info.changes: agents re-send full history every run (until
+      // Phase 2 incremental capture), so pre-upgrade interactions already exist
+      // (info.changes === 0). Running unconditionally lets upgraded agents
+      // backfill file events; UNIQUE + INSERT OR IGNORE prevents double-counts.
+      if (r.fileEvents?.length) {
+        for (const ev of r.fileEvents) {
+          insertFileEvent.run(r.interactionId, r.coder, r.agent, r.workspace, ev.file, ev.action, r.timestamp);
+        }
+      }
     }
     return n;
   });
@@ -138,6 +191,7 @@ export function ingestMany(rows: IngestRow[]): number {
 
 export interface CoderSummary {
   coder: string;
+  team: string | null;
   sessions: number;
   prompts: number;
   claude: number;
@@ -154,6 +208,7 @@ export function summaryByCoder(f: Filters = {}): CoderSummary[] {
   const { sql, params } = where(f);
   const rows = db.prepare(`
     SELECT coder,
+           MAX(team) team,
            COUNT(DISTINCT COALESCE(session_id, interaction_id)) sessions,
            COUNT(*) prompts,
            SUM(agent='claude_code') claude,
@@ -407,5 +462,109 @@ export function logAccess(actor: string, action: string, detail = ''): void {
 
 export function pruneRetention(): number {
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 86400_000).toISOString();
-  return db.prepare('DELETE FROM interactions WHERE received_at < ?').run(cutoff).changes;
+  const n = db.prepare('DELETE FROM interactions WHERE received_at < ?').run(cutoff).changes;
+  db.prepare('DELETE FROM file_events WHERE interaction_id NOT IN (SELECT interaction_id FROM interactions)').run();
+  return n;
+}
+
+// ── file events (authoritative per-turn file activity from tool calls) ────────
+
+export interface FileEventSummary {
+  workspace: string | null;
+  file: string;
+  agent: string;
+  reads: number;
+  edits: number;
+  writes: number;
+  last_ts: string | null;
+}
+
+export function fileEventSummary(f: Filters = {}): FileEventSummary[] {
+  const parts: string[] = [];
+  const params: (string | number)[] = [];
+  if (f.from) { parts.push('ts >= ?'); params.push(f.from); }
+  if (f.to)   { parts.push('ts <= ?'); params.push(f.to); }
+  if (f.coders?.length) {
+    parts.push(`coder IN (${f.coders.map(() => '?').join(',')})`);
+    params.push(...f.coders);
+  }
+  const sql = parts.length ? 'WHERE ' + parts.join(' AND ') : '';
+  return db.prepare(`
+    SELECT workspace, file, COALESCE(agent,'unknown') agent,
+           SUM(action='read')  reads,
+           SUM(action='edit')  edits,
+           SUM(action='write') writes,
+           MAX(ts) last_ts
+    FROM file_events ${sql}
+    GROUP BY workspace, file, agent
+    ORDER BY edits + writes DESC, reads DESC
+  `).all(...params) as FileEventSummary[];
+}
+
+// ── users / teams / roles (managed via direct DB edits or scripts/manage.js) ──
+
+export interface UserRow {
+  id: number;
+  name: string;
+  role: 'super_admin' | 'team_lead';
+  team_id: number | null;
+}
+
+export function findUserByTokenHash(hash: string): UserRow | null {
+  const r = db.prepare('SELECT id, name, role, team_id FROM users WHERE token_hash = ?')
+    .get(hash) as UserRow | undefined;
+  return r ?? null;
+}
+
+export function upsertTeam(name: string): number {
+  db.prepare('INSERT OR IGNORE INTO teams (name) VALUES (?)').run(name);
+  return (db.prepare('SELECT id FROM teams WHERE name = ?').get(name) as { id: number }).id;
+}
+
+export function addUser(
+  name: string,
+  role: 'super_admin' | 'team_lead',
+  tokenHash: string,
+  teamId: number | null,
+): void {
+  db.prepare('INSERT INTO users (name, role, token_hash, team_id) VALUES (?,?,?,?)')
+    .run(name, role, tokenHash, teamId);
+}
+
+export function assignCoder(coder: string, teamId: number): void {
+  db.prepare(
+    'INSERT INTO coder_teams (coder, team_id) VALUES (?,?) ' +
+    'ON CONFLICT(coder) DO UPDATE SET team_id = excluded.team_id'
+  ).run(coder, teamId);
+}
+
+export function codersForTeam(teamId: number): string[] {
+  return (db.prepare('SELECT coder FROM coder_teams WHERE team_id = ?').all(teamId) as { coder: string }[])
+    .map((r) => r.coder);
+}
+
+// ── agent heartbeats (fleet health) ───────────────────────────────────────────
+
+export interface FleetRow {
+  coder: string;
+  team: string | null;
+  version: string | null;
+  hostname: string | null;
+  last_seen: string;
+  prompts: number;
+}
+
+export function recordHeartbeat(h: Omit<FleetRow, 'last_seen'>): void {
+  db.prepare(`
+    INSERT INTO heartbeats (coder, team, version, hostname, last_seen, prompts)
+    VALUES (@coder, @team, @version, @hostname, @last_seen, @prompts)
+    ON CONFLICT(coder) DO UPDATE SET
+      team = excluded.team, version = excluded.version,
+      hostname = excluded.hostname, last_seen = excluded.last_seen,
+      prompts = excluded.prompts
+  `).run({ ...h, last_seen: new Date().toISOString() });
+}
+
+export function fleet(): FleetRow[] {
+  return db.prepare('SELECT * FROM heartbeats ORDER BY last_seen DESC').all() as FleetRow[];
 }

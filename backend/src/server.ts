@@ -4,7 +4,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PORT, INGEST_TOKEN } from './config';
 import { login, authorize } from './auth';
+import { scopeFilters, visibleCoders } from './scope';
 import {
+  codersForTeam,
   ingestMany,
   summaryByCoder,
   tokensByModel,
@@ -13,6 +15,9 @@ import {
   coderLimitUsage,
   projectSummary,
   fileChangesByProject,
+  fileEventSummary,
+  recordHeartbeat,
+  fleet,
   coderDailyActivity,
   allCoders,
   interactionsForCoder,
@@ -74,6 +79,21 @@ const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Pro
       return send(res, 200, { received: records.length, stored: ingestMany(records) });
     }
 
+    if (req.method === 'POST' && p === '/heartbeat') {
+      const m = /^Bearer\s+(.+)$/.exec(req.headers.authorization ?? '');
+      if (!m || m[1] !== INGEST_TOKEN) return send(res, 401, { error: 'bad ingest token' });
+      const b = JSON.parse((await readBody(req)) || '{}');
+      if (!b.coder) return send(res, 400, { error: 'coder required' });
+      recordHeartbeat({
+        coder: String(b.coder),
+        team: b.team != null ? String(b.team) : null,
+        version: b.version != null ? String(b.version) : null,
+        hostname: b.hostname != null ? String(b.hostname) : null,
+        prompts: Number(b.prompts ?? 0),
+      });
+      return send(res, 200, { ok: true });
+    }
+
     // ── auth ───────────────────────────────────────────────────────────────
     if (req.method === 'POST' && p === '/login') {
       const body = JSON.parse((await readBody(req)) || '{}');
@@ -94,48 +114,64 @@ const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Pro
     if (req.method === 'GET' && isApi) {
       const s = authorize(req);
       if (!s) return send(res, 401, { error: 'auth required' });
-      const f = parseFilters(url);
+      const f0 = parseFilters(url);
+      const f = scopeFilters(s, f0); // null → nothing visible to this session
 
       if (p === '/api/report') {
         logAccess(s.actor, 'report');
-        return send(res, 200, { coders: summaryByCoder(f) });
+        return send(res, 200, { coders: f ? summaryByCoder(f) : [] });
       }
       if (p === '/api/tokens') {
         logAccess(s.actor, 'tokens');
-        return send(res, 200, { rows: tokensByModel(f) });
+        return send(res, 200, { rows: f ? tokensByModel(f) : [] });
       }
       if (p === '/api/activity') {
-        return send(res, 200, { rows: activityOverTime(f) });
+        return send(res, 200, { rows: f ? activityOverTime(f) : [] });
       }
       if (p === '/api/complexity') {
-        return send(res, 200, { rows: taskClassBreakdown(f) });
+        return send(res, 200, { rows: f ? taskClassBreakdown(f) : [] });
       }
       if (p === '/api/coders') {
-        return send(res, 200, { coders: allCoders() });
+        return send(res, 200, { coders: visibleCoders(s, allCoders()) });
       }
       if (p === '/api/limits') {
-        return send(res, 200, { limits: LIMITS, usage: coderLimitUsage() });
+        const usage = coderLimitUsage();
+        const vis = new Set(visibleCoders(s, usage.map((u) => u.coder)));
+        return send(res, 200, { limits: LIMITS, usage: usage.filter((u) => vis.has(u.coder)) });
       }
       if (p === '/api/projects') {
-        return send(res, 200, { rows: projectSummary(f) });
+        return send(res, 200, { rows: f ? projectSummary(f) : [] });
       }
       if (p === '/api/file-changes') {
-        return send(res, 200, { rows: fileChangesByProject(f) });
+        return send(res, 200, { rows: f ? fileChangesByProject(f) : [] });
+      }
+      if (p === '/api/file-events') {
+        return send(res, 200, { rows: f ? fileEventSummary(f) : [] });
+      }
+      if (p === '/api/fleet') {
+        const rows = fleet();
+        if (s.role === 'super_admin') return send(res, 200, { rows });
+        const vis = new Set(visibleCoders(s, rows.map((r) => r.coder)));
+        return send(res, 200, { rows: rows.filter((r) => vis.has(r.coder)) });
       }
       const drill = /^\/api\/coder\/(.+)$/.exec(p);
       if (drill) {
         const coder = decodeURIComponent(drill[1]);
+        if (s.role === 'team_lead' && !codersForTeam(s.teamId ?? -1).includes(coder)) {
+          return send(res, 403, { error: 'forbidden' });
+        }
         logAccess(s.actor, `drilldown:${coder}`);
-        const coderFilter = { ...f, coders: [coder] };
+        const coderFilter = { ...f0, coders: [coder] };
         const allUsage = coderLimitUsage();
         return send(res, 200, {
           coder,
-          interactions: interactionsForCoder(coder, 200, f),
+          interactions: interactionsForCoder(coder, 200, f0),
           tokens: tokensByModel(coderFilter),
-          daily: coderDailyActivity(coder, f),
+          daily: coderDailyActivity(coder, f0),
           projects: projectSummary(coderFilter),
           fileChanges: fileChangesByProject(coderFilter),
-          limits: { config: LIMITS, usage: allUsage.find(u => u.coder === coder) ?? null },
+          fileEvents: fileEventSummary({ ...f0, coders: [coder] }),
+          limits: { config: LIMITS, usage: allUsage.find((u) => u.coder === coder) ?? null },
         });
       }
     }

@@ -5,6 +5,8 @@
   "description": "Local ingestion API + SQLite store + retention for the monitoring pipeline. Role-gated drill-down with access logging. Monitoring-only.",
   "scripts": {
     "compile": "tsc -p ./",
+    "build": "tsc -p ./",
+    "test": "npm run build && node --test",
     "start": "node out/server.js"
   },
   "dependencies": {

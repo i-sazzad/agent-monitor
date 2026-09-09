@@ -161,6 +161,15 @@
       </div>
     </div>
 
+    <!-- FILES WORKED ON -->
+    <div class="card">
+      <div class="ch">📄 Files worked on <span style="color:var(--muted);text-transform:none;letter-spacing:0;font-size:10px">· from agent tool calls</span></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Project</th><th>File</th><th>Agent</th><th class="r">Edits</th><th class="r">Writes</th><th class="r">Reads</th><th class="r">Last</th></tr></thead>
+        <tbody id="feTbody"></tbody>
+      </table></div>
+    </div>
+
     <!-- PROMPTS -->
     <div class="card">
       <div class="ch">💬 Prompts <span id="promptCount" style="color:var(--fg);text-transform:none;letter-spacing:0;margin-left:4px"></span></div>
@@ -221,7 +230,23 @@ async function load() {
   const qs = buildQS();
   _data = await apiFetch('/agent-monitor/api/coder/' + encodeURIComponent(CODER) + qs);
   render();
+  renderFileEvents(_data);
   $('#lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+function renderFileEvents(d) {
+  const rows = d.fileEvents || [];
+  $('#feTbody').innerHTML = rows.length ? rows.map(r => `
+    <tr>
+      <td>${esc(projName(r.workspace || '(unknown)'))}</td>
+      <td>${esc(r.file)}</td>
+      <td>${pill(r.agent === 'claude_code' ? 'Claude' : esc(r.agent))}</td>
+      <td class="r">${r.edits || 0}</td>
+      <td class="r">${r.writes || 0}</td>
+      <td class="r">${r.reads || 0}</td>
+      <td class="r">${r.last_ts ? new Date(r.last_ts).toLocaleDateString() : ''}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="7" style="color:var(--muted)">No file activity captured yet</td></tr>';
 }
 
 function render() {
@@ -369,7 +394,7 @@ resetDates();
   if (t) $('#fTo').value   = localDateStr(new Date(t));
 })();
 apiFetch('/agent-monitor/api/coder/' + encodeURIComponent(CODER) + buildQS()).then(data => {
-  _data = data; showDetail(); render();
+  _data = data; showDetail(); render(); renderFileEvents(data);
   $('#lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }).catch(() => showLogin());
 </script>

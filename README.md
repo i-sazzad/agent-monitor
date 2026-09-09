@@ -51,6 +51,7 @@ On each coder's machine, copy the `monitor/` folder and create a `.env` inside i
 INGEST_URL=http://192.168.x.x:4319
 INGEST_TOKEN=<same token as backend>
 CODER_NAME=alice
+TEAM_NAME=platform
 CLAUDE_ACCOUNT_EMAIL=alice@company.com
 OPENCODE_ACCOUNT_EMAIL=alice@company.com
 ```
@@ -67,7 +68,14 @@ OPENCODE_ACCOUNT_EMAIL=alice@company.com
 bash monitor/setup-terminal-hook.sh
 ```
 
-### 3. (Optional) Set shared account limits
+### 3. Enable autostart (recommended)
+
+- **Windows:** double-click `monitor/install.bat` — registers Task Scheduler
+  entries that run the capture at logon and every 15 minutes.
+- **Linux/macOS:** `bash monitor/install.sh` — installs a systemd user timer
+  (cron fallback) doing the same. Remove with the matching `uninstall` script.
+
+### 4. (Optional) Set shared account limits
 
 In `.env`, set the daily/weekly session limits for your Claude and OpenCode accounts:
 
